@@ -1,8 +1,10 @@
 from fastapi import FastAPI, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
+from sqlalchemy import or_, and_, func
 from typing import List, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from datetime import date
+from enum import Enum
 
 from app.db import get_db, engine
 from app.models import Base, Startup, Investor, Investment
@@ -10,67 +12,294 @@ from app.models import Base, Startup, Investor, Investment
 # Создаем таблицы при старте
 Base.metadata.create_all(bind=engine)
 
-# Создаем приложение
+# Создаем приложение с расширенной документацией
 app = FastAPI(
-    title="Investment Intelligence Hub",
-    description="API для агрегации и анализа данных о стартапах и венчурных инвестициях",
-    version="1.0.0"
+    title="Investment Intelligence Hub API",
+    description="""
+🚀 **Полнофункциональный REST API для анализа инвестиционных данных**
+
+### Возможности:
+- ✅ Полнотекстовый поиск (Full-text search)
+- ✅ Сложная фильтрация по множеству параметров
+- ✅ Сортировка по различным полям
+- ✅ Пагинация для больших результатов
+- ✅ Статистика и аналитика
+- ✅ Интерактивная документация (Swagger UI)
+
+### Основные ресурсы:
+- **Startups** - Информация о стартапах
+- **Investors** - Данные об инвесторах
+- **Investments** - История инвестиций
+- **Search** - Полнотекстовый поиск по всем ресурсам
+
+### Версии:
+- v1.0.0: REST API базовый уровень
+- v2.0.0: REST API продвинутый уровень (Неделя 8)
+    """,
+    version="2.0.0",
+    openapi_tags=[
+        {"name": "Info", "description": "Основная информация о сервере"},
+        {"name": "Startups", "description": "Управление стартапами"},
+        {"name": "Investors", "description": "Управление инвесторами"},
+        {"name": "Investments", "description": "Управление инвестициями"},
+        {"name": "Search", "description": "Полнотекстовый поиск"},
+        {"name": "Statistics", "description": "Аналитика и статистика"},
+    ]
 )
 
 
 # ==================== Pydantic Models (для JSON ответов) ====================
 
 class InvestmentRead(BaseModel):
-    id: int
-    startup_id: int
-    investor_id: int
-    round: Optional[str] = None
-    amount_usd: Optional[float] = None
-    announced_date: Optional[date] = None
+    """Модель для чтения данных об инвестиции"""
+    id: int = Field(..., description="Уникальный идентификатор инвестиции")
+    startup_id: int = Field(..., description="ID стартапа")
+    investor_id: int = Field(..., description="ID инвестора")
+    round: Optional[str] = Field(None, description="Раунд финансирования (например, 'Series A', 'Seed')")
+    amount_usd: Optional[float] = Field(None, description="Сумма инвестиции в USD")
+    announced_date: Optional[date] = Field(None, description="Дата объявления инвестиции")
+
+    model_config = {
+        "from_attributes": True,
+        "json_schema_extra": {
+            "example": {
+                "id": 1,
+                "startup_id": 5,
+                "investor_id": 3,
+                "round": "Series B",
+                "amount_usd": 15000000.00,
+                "announced_date": "2024-06-15"
+            }
+        }
+    }
 
     class Config:
         from_attributes = True
 
 
 class InvestorRead(BaseModel):
-    id: int
-    name: str
-    investments: List[InvestmentRead] = []
+    """Модель для чтения данных об инвесторе"""
+    id: int = Field(..., description="Уникальный идентификатор инвестора")
+    name: str = Field(..., description="Имя или название инвестора")
+    investments: List[InvestmentRead] = Field(default_factory=list, description="Список инвестиций инвестора")
+
+    model_config = {
+        "from_attributes": True,
+        "json_schema_extra": {
+            "example": {
+                "id": 3,
+                "name": "Sequoia Capital",
+                "investments": [
+                    {
+                        "id": 1,
+                        "startup_id": 5,
+                        "investor_id": 3,
+                        "round": "Series B",
+                        "amount_usd": 15000000.00,
+                        "announced_date": "2024-06-15"
+                    }
+                ]
+            }
+        }
+    }
 
     class Config:
         from_attributes = True
 
 
 class StartupRead(BaseModel):
-    id: int
-    name: str
-    country: Optional[str] = None
-    investments: List[InvestmentRead] = []
+    """Модель для чтения данных о стартапе"""
+    id: int = Field(..., description="Уникальный идентификатор стартапа")
+    name: str = Field(..., description="Название стартапа")
+    country: Optional[str] = Field(None, description="Страна базирования стартапа")
+    investments: List[InvestmentRead] = Field(default_factory=list, description="Список инвестиций в стартап")
+
+    model_config = {
+        "from_attributes": True,
+        "json_schema_extra": {
+            "example": {
+                "id": 5,
+                "name": "OpenAI",
+                "country": "USA",
+                "investments": [
+                    {
+                        "id": 1,
+                        "startup_id": 5,
+                        "investor_id": 3,
+                        "round": "Series B",
+                        "amount_usd": 15000000.00,
+                        "announced_date": "2024-06-15"
+                    }
+                ]
+            }
+        }
+    }
 
     class Config:
         from_attributes = True
 
 
 class PaginationMeta(BaseModel):
-    total: int
-    page: int
-    per_page: int
-    pages: int
+    """Метаданные о пагинации"""
+    total: int = Field(..., description="Общее количество элементов")
+    page: int = Field(..., description="Текущая страница")
+    per_page: int = Field(..., description="Элементов на странице")
+    pages: int = Field(..., description="Общее количество страниц")
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "total": 100,
+                "page": 1,
+                "per_page": 10,
+                "pages": 10
+            }
+        }
+    }
 
 
+# Enums для сортировки
+class SortOrder(str, Enum):
+    asc = "asc"
+    desc = "desc"
+
+
+# Response модели
 class StartupListResponse(BaseModel):
-    data: List[StartupRead]
-    meta: PaginationMeta
+    """Ответ со списком стартапов"""
+    data: List[StartupRead] = Field(..., description="Список стартапов")
+    meta: PaginationMeta = Field(..., description="Метаданные пагинации")
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "data": [
+                    {
+                        "id": 5,
+                        "name": "OpenAI",
+                        "country": "USA",
+                        "investments": []
+                    },
+                    {
+                        "id": 6,
+                        "name": "Tesla",
+                        "country": "USA",
+                        "investments": []
+                    }
+                ],
+                "meta": {
+                    "total": 100,
+                    "page": 1,
+                    "per_page": 10,
+                    "pages": 10
+                }
+            }
+        }
+    }
 
 
 class InvestorListResponse(BaseModel):
-    data: List[InvestorRead]
-    meta: PaginationMeta
+    """Ответ со списком инвесторов"""
+    data: List[InvestorRead] = Field(..., description="Список инвесторов")
+    meta: PaginationMeta = Field(..., description="Метаданные пагинации")
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "data": [
+                    {
+                        "id": 1,
+                        "name": "Andrey Volkov",
+                        "investments": []
+                    },
+                    {
+                        "id": 3,
+                        "name": "Sequoia Capital",
+                        "investments": []
+                    }
+                ],
+                "meta": {
+                    "total": 50,
+                    "page": 1,
+                    "per_page": 10,
+                    "pages": 5
+                }
+            }
+        }
+    }
 
 
 class InvestmentListResponse(BaseModel):
-    data: List[InvestmentRead]
-    meta: PaginationMeta
+    """Ответ со списком инвестиций"""
+    data: List[InvestmentRead] = Field(..., description="Список инвестиций")
+    meta: PaginationMeta = Field(..., description="Метаданные пагинации")
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "data": [
+                    {
+                        "id": 1,
+                        "startup_id": 5,
+                        "investor_id": 3,
+                        "round": "Series B",
+                        "amount_usd": 15000000.00,
+                        "announced_date": "2024-06-15"
+                    }
+                ],
+                "meta": {
+                    "total": 200,
+                    "page": 1,
+                    "per_page": 10,
+                    "pages": 20
+                }
+            }
+        }
+    }
+
+
+# Модель для комбинированного поиска
+class SearchResult(BaseModel):
+    """Результат поиска"""
+    id: int = Field(..., description="Идентификатор объекта")
+    type: str = Field(..., description="Тип объекта: 'startup', 'investor' или 'investment'")
+    name: str = Field(..., description="Имя или название объекта")
+    details: dict = Field(..., description="Дополнительные детали")
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "id": 5,
+                "type": "startup",
+                "name": "OpenAI",
+                "details": {"country": "USA"}
+            }
+        }
+    }
+
+
+class UnifiedSearchResponse(BaseModel):
+    """Ответ с результатами поиска"""
+    results: List[SearchResult] = Field(..., description="Список результатов поиска")
+    total: int = Field(..., description="Общее количество найденных результатов")
+    query: str = Field(..., description="Поисковый запрос")
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "results": [
+                    {
+                        "id": 5,
+                        "type": "startup",
+                        "name": "OpenAI",
+                        "details": {"country": "USA"}
+                    }
+                ],
+                "total": 1,
+                "query": "OpenAI"
+            }
+        }
+    }
 
 
 # ==================== Root Endpoints ====================
@@ -122,16 +351,20 @@ def get_startups(
     per_page: int = Query(10, ge=1, le=100, description="Количество элементов на странице"),
     country: Optional[str] = Query(None, description="Фильтр по стране"),
     name: Optional[str] = Query(None, description="Поиск по названию (содержит)"),
+    sort_by: str = Query("name", description="Поле для сортировки (name, founded_year)"),
+    sort_order: SortOrder = Query(SortOrder.asc, description="Порядок сортировки (asc или desc)"),
     db: Session = Depends(get_db)
 ):
     """
-    Получить список стартапов с пагинацией и фильтрацией
+    Получить список стартапов с пагинацией, фильтрацией и сортировкой
     
     ### Параметры:
     - **page**: Номер страницы (по умолчанию 1)
     - **per_page**: Количество элементов на странице (1-100, по умолчанию 10)
     - **country**: Фильтрация по стране (опционально)
     - **name**: Поиск по названию/части названия (опционально)
+    - **sort_by**: Поле для сортировки: 'name' или 'founded_year' (по умолчанию 'name')
+    - **sort_order**: 'asc' для возрастания или 'desc' для убывания (по умолчанию 'asc')
     """
     query = db.query(Startup)
 
@@ -140,6 +373,17 @@ def get_startups(
         query = query.filter(Startup.country == country)
     if name:
         query = query.filter(Startup.name.ilike(f"%{name}%"))
+
+    # Применяем сортировку
+    if sort_by == "founded_year":
+        order_column = Startup.founded_year
+    else:  # default to name
+        order_column = Startup.name
+
+    if sort_order == SortOrder.desc:
+        query = query.order_by(order_column.desc())
+    else:
+        query = query.order_by(order_column.asc())
 
     # Получаем общее количество
     total = query.count()
@@ -180,21 +424,31 @@ def get_investors(
     page: int = Query(1, ge=1, description="Номер страницы (начиная с 1)"),
     per_page: int = Query(10, ge=1, le=100, description="Количество элементов на странице"),
     name: Optional[str] = Query(None, description="Поиск по названию (содержит)"),
+    sort_by: str = Query("name", description="Поле для сортировки (name)"),
+    sort_order: SortOrder = Query(SortOrder.asc, description="Порядок сортировки (asc или desc)"),
     db: Session = Depends(get_db)
 ):
     """
-    Получить список инвесторов с пагинацией и фильтрацией
+    Получить список инвесторов с пагинацией, фильтрацией и сортировкой
     
     ### Параметры:
     - **page**: Номер страницы (по умолчанию 1)
     - **per_page**: Количество элементов на странице (1-100, по умолчанию 10)
     - **name**: Поиск по названию/части названия (опционально)
+    - **sort_by**: Поле для сортировки (по умолчанию 'name')
+    - **sort_order**: 'asc' для возрастания или 'desc' для убывания (по умолчанию 'asc')
     """
     query = db.query(Investor)
 
     # Применяем фильтры
     if name:
         query = query.filter(Investor.name.ilike(f"%{name}%"))
+
+    # Применяем сортировку (по умолчанию по имени)
+    if sort_order == SortOrder.desc:
+        query = query.order_by(Investor.name.desc())
+    else:
+        query = query.order_by(Investor.name.asc())
 
     # Получаем общее количество
     total = query.count()
@@ -239,10 +493,13 @@ def get_investments(
     round: Optional[str] = Query(None, description="Фильтр по раунду (Seed, Series A и т.д.)"),
     min_amount: Optional[float] = Query(None, ge=0, description="Минимальная сумма в USD"),
     max_amount: Optional[float] = Query(None, ge=0, description="Максимальная сумма в USD"),
+    status: Optional[str] = Query(None, description="Фильтр по статусу (Active, Concluded и т.д.)"),
+    sort_by: str = Query("date", description="Поле для сортировки (date, amount_usd)"),
+    sort_order: SortOrder = Query(SortOrder.desc, description="Порядок сортировки (asc или desc)"),
     db: Session = Depends(get_db)
 ):
     """
-    Получить список инвестиций с пагинацией и фильтрацией
+    Получить список инвестиций с расширенной фильтрацией и сортировкой
     
     ### Параметры:
     - **page**: Номер страницы (по умолчанию 1)
@@ -252,6 +509,9 @@ def get_investments(
     - **round**: Фильтр по типу раунда (опционально)
     - **min_amount**: Минимальная сумма инвестиции (опционально)
     - **max_amount**: Максимальная сумма инвестиции (опционально)
+    - **status**: Фильтр по статусу (опционально)
+    - **sort_by**: Поле для сортировки: 'date' или 'amount_usd' (по умолчанию 'date')
+    - **sort_order**: 'asc' для возрастания или 'desc' для убывания (по умолчанию 'desc')
     """
     query = db.query(Investment)
 
@@ -262,10 +522,23 @@ def get_investments(
         query = query.filter(Investment.investor_id == investor_id)
     if round:
         query = query.filter(Investment.round == round)
+    if status:
+        query = query.filter(Investment.status == status)
     if min_amount is not None:
         query = query.filter(Investment.amount_usd >= min_amount)
     if max_amount is not None:
         query = query.filter(Investment.amount_usd <= max_amount)
+
+    # Применяем сортировку
+    if sort_by == "amount_usd":
+        order_column = Investment.amount_usd
+    else:  # default to date
+        order_column = Investment.date
+
+    if sort_order == SortOrder.desc:
+        query = query.order_by(order_column.desc())
+    else:
+        query = query.order_by(order_column.asc())
 
     # Получаем общее количество
     total = query.count()
@@ -297,6 +570,103 @@ def get_investment(investment_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail=f"Investment with ID {investment_id} not found")
 
     return InvestmentRead.from_orm(investment)
+
+
+# ==================== Advanced Search Endpoint ====================
+
+@app.get("/search", response_model=UnifiedSearchResponse, tags=["Search"])
+def unified_search(
+    q: str = Query(..., min_length=1, description="Поисковое выражение"),
+    search_type: Optional[str] = Query(None, description="Тип поиска: 'startup', 'investor', 'investment' или пусто для всех"),
+    limit: int = Query(20, ge=1, le=100, description="Максимум результатов"),
+    db: Session = Depends(get_db)
+):
+    """
+    🔍 Полнотекстовый поиск по всем ресурсам
+    
+    Выполняет поиск по названиям и описаниям стартапов, инвесторов и инвестиций.
+    
+    ### Параметры:
+    - **q**: Поисковое выражение (обязательно)
+    - **search_type**: Ограничить поиск типом ресурса (опционально)
+    - **limit**: Максимум результатов (по умолчанию 20, максимум 100)
+    
+    ### Примеры использования:
+    - `/search?q=tech` - поиск по всем ресурсам
+    - `/search?q=OpenAI&search_type=startup` - поиск только стартапов
+    - `/search?q=Sequoia&search_type=investor` - поиск только инвесторов
+    """
+    results = []
+    search_query = f"%{q}%"
+
+    # Поиск в стартапах
+    if search_type is None or search_type == "startup":
+        startups = db.query(Startup).filter(
+            or_(
+                Startup.name.ilike(search_query),
+                Startup.country.ilike(search_query)
+            )
+        ).limit(limit).all()
+
+        for startup in startups:
+            results.append(SearchResult(
+                id=startup.id,
+                type="startup",
+                name=startup.name,
+                details={
+                    "country": startup.country,
+                    "founded_year": startup.founded_year,
+                    "description": startup.description or "N/A"
+                }
+            ))
+
+    # Поиск в инвесторах
+    if search_type is None or search_type == "investor":
+        investors = db.query(Investor).filter(
+            Investor.name.ilike(search_query)
+        ).limit(limit).all()
+
+        for investor in investors:
+            results.append(SearchResult(
+                id=investor.id,
+                type="investor",
+                name=investor.name,
+                details={
+                    "fund_name": investor.fund_name or "N/A",
+                    "focus_area": investor.focus_area or "N/A"
+                }
+            ))
+
+    # Поиск в инвестициях (по раунду)
+    if search_type is None or search_type == "investment":
+        investments = db.query(Investment).filter(
+            or_(
+                Investment.round.ilike(search_query),
+                Investment.status.ilike(search_query)
+            )
+        ).limit(limit).all()
+
+        for investment in investments:
+            startup = db.query(Startup).filter(Startup.id == investment.startup_id).first()
+            investor = db.query(Investor).filter(Investor.id == investment.investor_id).first()
+
+            results.append(SearchResult(
+                id=investment.id,
+                type="investment",
+                name=f"{startup.name if startup else 'Unknown'} - {investor.name if investor else 'Unknown'}",
+                details={
+                    "round": investment.round,
+                    "amount_usd": float(investment.amount_usd),
+                    "status": investment.status,
+                    "date": investment.date.isoformat() if investment.date else None
+                }
+            ))
+
+    return UnifiedSearchResponse(
+        results=results[:limit],
+        total=len(results),
+        query=q
+    )
 
 
 # ==================== Statistics Endpoints ====================
