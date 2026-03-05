@@ -1,575 +1,125 @@
-# Investment Intelligence Hub (Topic #12)
+# 🚀 Investment Intelligence Hub
 
-Проект для агрегации и анализа данных о стартапах и венчурных инвестициях.
+[![CI Pipeline](https://github.com/clifttt/backend-pro/actions/workflows/ci.yml/badge.svg)](https://github.com/clifttt/backend-pro/actions)
+[![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=flat&logo=fastapi)](https://fastapi.tiangolo.com/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-316192?style=flat&logo=postgresql)](https://www.postgresql.org/)
+[![Docker](https://img.shields.io/badge/Docker-2496ED?style=flat&logo=docker)](https://www.docker.com/)
 
-## 👥 Команда и Роли
-
-1. **Zhangir - Backend Developer**
-   - Разработка REST API (FastAPI)
-   - Архитектура Базы Данных (PostgreSQL)
-   - Аутентификация (JWT)
-
-2. **Nurislam - Data Engineer**
-   - Сбор данных (Parsing/Scraping)
-   - Очистка и обработка данных
-   - Настройка пайплайнов обработки
-
-3. **Nurym - DevOps Engineer**
-   - Контейнеризация (Docker)
-   - CI/CD (GitHub Actions)
-   - Мониторинг и логирование
-
-## 🛠 Технологический стек
-
-- **Язык:** Python 3.10+
-- **API:** FastAPI
-- **Database:** PostgreSQL
-- **Migrations:** Alembic
-- **Deployment:** Docker & Docker Compose
-- **Data Source:** Открытые источники и API агрегаторов
-
-## 📅 План на Неделю 1 (Выполнено)
-
-- [x] Выбор темы и анализ предметной области.
-- [x] Распределение ролей.
-- [x] Инициализация репозитория.
-- [x] Определение стека технологий.
-
-## 📋 План на Неделю 2-3: Сбор и Обработка Данных
-
-### ✅ Сбор данных (Collector) – Часть 1 (10%) - ВЫПОЛНЕНО
-- [x] Реализация базового парсера/скрейпера (`collector.py`)
-- [x] Настройка сохранения «сырых» данных в БД
-- [x] Минимум 55 записей в базе данных
-- **Статус:** ✅ **ЗАВЕРШЕНО** | Примерно 10% от требуемого функционала
-
-### 🔧 Сбор данных (Collector) – Часть 2 - В РАЗРАБОТКЕ
-- [x] Реализация обхода блокировок:
-  - [x] Ротация User-Agents (`UserAgentManager`)
-  - [x] Поддержка прокси-серверов (`ProxyManager`)
-  - [x] Случайные задержки между запросами (1-5 сек)
-- [x] Автоматизация запуска:
-  - [x] APScheduler для расписания (`scheduler_main.py`)
-  - [x] Cron-выражения для запуска по расписанию
-  - [x] Ежедневный запуск в 00:00 (настраивается)
-  - [x] Проверка здоровья каждый час
-- [x] Обработка ошибок соединения:
-  - [x] Retry механизм с экспоненциальной задержкой
-  - [x] Обработка Timeout, ConnectionError, HTTPError
-  - [x] Логирование всех ошибок в `collector.log`
-- [x] Улучшенный коллектор (`enhanced_collector.py`)
-  - [x] Класс `ProxyManager` - управление прокси
-  - [x] Класс `UserAgentManager` - ротация User-Agent'ов
-  - [x] Класс `EnhancedDataCollector` - основной коллектор
-  - [x] Метод `health_check()` - проверка здоровья
-- **Статус:** ✅ **ЗАВЕРШЕНО** | Все компоненты реализованы
-
-### 📊 Обработка и Бизнес-логика - В РАЗРАБОТКЕ
-- [x] Реализация модуля очистки и нормализации данных (`normalizer.py`):
-  - [x] Класс `DataNormalizer` - нормализация всех полей
-  - [x] Нормализация имен компаний и инвесторов
-  - [x] Нормализация типов раундов финансирования
-  - [x] Нормализация сумм финансирования
-- [x] Выделение сущностей (`EntityExtractor`):
-  - [x] Извлечение дат (YYYY-MM-DD, MM/DD/YYYY, полный формат)
-  - [x] Извлечение имен людей (ФИ)
-  - [x] Извлечение числовых значений (суммы финансирования)
-- [x] Оценка качества данных (`QualityAssessment`):
-  - [x] Подсчет всех сущностей
-  - [x] Проверка целостности (Foreign Keys)
-  - [x] Валидация финансовых данных
-  - [x] Анализ разнообразия данных
-  - [x] Итоговый балл качества (0-100)
-- [x] Обработчик данных (`DataProcessor`):
-  - [x] Полная нормализация всех данных в БД
-  - [x] Интеграция всех компонентов обработки
-- **Статус:** ✅ **ЗАВЕРШЕНО** | Все компоненты реализованы
-
-# Investment Intelligence Hub (Topic #12)
-
-Проект для агрегации и анализа данных о стартапах и венчурных инвестициях.
-**Статус:** ✅ **НЕДЕЛЯ 7 - ЗАВЕРШЕНА** | REST API готов к использованию
+**Investment Intelligence Hub** — это мощная Backend-платформа для автоматизированного сбора, агрегации и анализа венчурных инвестиций и данных о стартапах. Проект разработан в рамках курса *Advanced Backend & DevOps*.
 
 ---
 
 ## 👥 Команда и Роли
 
-1. **Zhangir - Backend Developer**
-   - Разработка REST API (FastAPI)
-   - Архитектура Базы Данных (PostgreSQL)
-   - Аутентификация (JWT)
-
-2. **Nurislam - Data Engineer**
-   - Сбор данных (Parsing/Scraping)
-   - Очистка и обработка данных
-   - Настройка пайплайнов обработки
-
-3. **Nurym - DevOps Engineer**
-   - Контейнеризация (Docker)
-   - CI/CD (GitHub Actions)
-   - Мониторинг и логирование
-
-## 🛠 Технологический стек
-
-- **Язык:** Python 3.10+
-- **API:** FastAPI
-- **Веб-сервер:** Uvicorn
-- **Database:** PostgreSQL
-- **Migrations:** Alembic
-- **Deployment:** Docker & Docker Compose
-- **Scheduler:** APScheduler
-- **Parsing:** BeautifulSoup4, Requests
+*   **Zhangir** — *Backend Developer*: Архитектура БД, разработка REST API, логика фильтрации и поиска.
+*   **Nurislam** — *Data Engineer*: Сбор данных (Scraping), нормализация, очистка и оценка качества данных.
+*   **Nurym** — *DevOps Engineer*: Контейнеризация, настройка CI/CD Pipelines, управление инфраструктурой.
 
 ---
 
-## 📅 Статус разработки по неделям
+## 🛠 Технологический Стек
 
-### ✅ Неделя 1: Планирование и анализ
-- [x] Выбор темы проекта
-- [x] Анализ источников данных
-- [x] Распределение ролей
-- [x] Определение стека технологий
-
-### ✅ Неделя 2: Настройка окружения
-- [x] Создание GitHub репозитория
-- [x] Docker окружение (App + DB)
-- [x] .gitignore и структура проекта
-- [x] Hello World контейнер работает ✓
-
-### ✅ Неделя 3: Проектирование БД и моделей
-- [x] ER-диаграмма (Startup ↔ Investment ↔ Investor)
-- [x] SQLAlchemy ORM модели
-- [x] Alembic миграции
-- [x] Соответствие структуры БД данным ✓
-
-### ✅ Неделя 4: Сбор данных (Collector) – Часть 1
-- [x] Реализация базового парсера
-- [x] Сохранение данных в БД
-- [x] Минимум 50 записей ✓ (имеются тестовые данные)
-
-### ✅ Неделя 5: Сбор данных (Collector) – Часть 2
-- [x] Обход блокировок (User-Agents, Proxy, Delay)
-- [x] Автоматизация (APScheduler, Cron)
-- [x] Обработка ошибок соединения
-- [x] Полная стабильность ✓
-
-### ✅ Неделя 6: Обработка и Бизнес-логика
-- [x] Нормализация данных
-- [x] Выделение сущностей (даты, имена, числа)
-- [x] Оценка качества данных (0-100 баллов)
-- [x] Качество структурированных данных ✓
-
-### ✅ Неделя 7: REST API – Базовый уровень
-- [x] GET эндпоинты для получения списка данных
-- [x] Пагинация (page, per_page)
-- [x] Фильтрация по различным параметрам
-- [x] JSON ответы с метаданными
-- [x] Интерактивная документация (Swagger UI)
-- [x] **ПРОЕКТ ЗАВЕРШЕН** ✅
+*   **Core:** Python 3.10+, FastAPI, Uvicorn
+*   **Database:** PostgreSQL (SQLAlchemy 2.0 + Alembic)
+*   **Data Processing:** BeautifulSoup4, Requests (Robust Sessions), APScheduler
+*   **Infrastructure:** Docker, Docker Compose, GitHub Actions (CI/CD)
+*   **Quality:** Flake8 (Linting), Pytest-style Integration Tests
 
 ---
 
-## 🚀 Быстрый старт
+## ✨ Ключевые Возможности
 
-### Вариант 1: Локальное развертывание (🌟 РЕКОМЕНДУЕТСЯ)
+### 📡 Продвинутый Collector
+*   **Anti-Blocking:** Ротация User-Agent, поддержка прокси, адаптивные задержки и экспоненциальный backoff при ошибках.
+*   **Robust Fetching:** Обработка таймаутов и автоматические повторы запросов.
+*   **Automation:** Встроенный планировщик задач для регулярного обновления данных.
 
-#### Требования:
-- Python 3.10+
-- PostgreSQL 12+ (должна быть установлена и работать)
+### 🧹 Интеллектуальный Processor
+*   **Normalization:** Очистка данных от мусора, приведение к единому формату названий и дат.
+*   **Entity Extraction:** Извлечение сумм, дат и тегов из неструктурированного текста с помощью regex.
+*   **Quality Score:** Автоматическая оценка качества данных в базе (0-100%).
 
-#### Шаги:
-
-```bash
-# 1. Клонируем/открываем проект
-cd backend-pro-main
-
-# 2. Создаем виртуальное окружение
-python -m venv venv
-
-# 3. Активируем окружение
-# На Windows:
-venv\Scripts\activate
-# На Linux/Mac:
-source venv/bin/activate
-
-# 4. Устанавливаем зависимости
-pip install -r requirements.txt
-
-# 5. Инициализируем БД (создает таблицы и загружает тестовые данные)
-python init_db.py
-
-# 6. Запускаем FastAPI сервер
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-```
-
-**Результат:**
-✅ API запущен и доступен по адресу: **http://localhost:8000**
-📚 Документация (Swagger UI): **http://localhost:8000/docs**
+### ⚡ Мощный REST API
+*   **Unified Search:** Полнотекстовый поиск по всем сущностям (стартапы, инвесторы, инвестиции).
+*   **Advanced Filtering:** Сложная фильтрация, сортировка и пагинация во всех эндпоинтах.
+*   **Live Stats:** Агрегированная статистика по инвестициям и топ-стартапам.
 
 ---
 
-### Вариант 2: Docker Compose (для Docker установки)
+## 🚀 Быстрый Старт
 
-```bash
-# 1. Убедиться что Docker и Docker Compose установлены
+### Через Docker (Рекомендуется)
 
-# 2. Запустить контейнеры
-docker-compose up -d
+1.  **Создайте .env файл:**
+    ```bash
+    cp .env.example .env
+    ```
+2.  **Запустите контейнеры:**
+    ```bash
+    docker-compose up -d --build
+    ```
+3.  **Инициализируйте БД:**
+    ```bash
+    docker-compose exec web python init_db.py
+    ```
 
-# 3. Инициализировать БД в контейнере
-docker-compose exec web python init_db.py
+### Локальный запуск
 
-# 4. Сервер доступен по адресу: http://localhost:8000
+1.  **Установите зависимости:**
+    ```bash
+    pip install -r requirements.txt
+    ```
+2.  **Настройте БД** и укажите URL в `.env`.
+3.  **Запустите сервер:**
+    ```bash
+    uvicorn app.main:app --reload
+    ```
+
+---
+
+## 📖 Документация API
+
+После запуска документация доступна по адресам:
+*   **Swagger UI:** [http://localhost:8000/docs](http://localhost:8000/docs)
+*   **ReDoc:** [http://localhost:8000/redoc](http://localhost:8000/redoc)
+
+### Основные Эндпоинты
+*   `GET /search?q=query` — Глобальный поиск.
+*   `GET /startups` — Список стартапов с фильтрацией по странам и дате основания.
+*   `GET /investors` — Данные об инвесторах и их фокусах.
+*   `GET /investments` — История инвестиций с фильтрацией по суммам и раундам.
+*   `GET /statistics` — Аналитические данные по рынку.
+
+---
+
+## 📁 Структура Проекта
+
+```text
+├── app/                  # Основное FastAPI приложение
+│   ├── main.py           # Эндпоинты и бизнес-логика API
+│   ├── models/           # SQLAlchemy ORM сущности
+│   └── db.py             # Настройки подключения к БД
+├── alembic/              # Миграции базы данных
+├── .github/              # GitHub Actions (CI/CD Pipeline)
+├── enhanced_collector.py # Модуль сбора данных с защитой от блокировок
+├── normalizer.py         # Модуль очистки и оценки качества данных
+├── scheduler_main.py     # Планировщик фоновых задач
+├── init_db.py            # Скрипт инициализации и посева (Seed) данных
+├── test_api.py           # Скрипт автоматизированного тестирования API
+└── docker-compose.yml    # Оркестрация контейнеров
 ```
 
 ---
 
-## 📚 REST API Документация
-
-### Базовая информация
-
-**Base URL:** `http://localhost:8000`
-
-### Endpoints
-
-#### 1️⃣ GET `/` - Главная страница
-```bash
-curl http://localhost:8000/
-```
-Возвращает информацию о сервере и доступные эндпоинты.
-
----
-
-#### 2️⃣ GET `/health` - Проверка здоровья
-```bash
-curl http://localhost:8000/health
-```
-**Ответ:**
-```json
-{
-  "status": "✅ OK",
-  "database": "✅ Connected",
-  "statistics": {
-    "startups": 10,
-    "investors": 10,
-    "investments": 30
-  }
-}
-```
-
----
-
-### 🏢 Стартапы (Startups)
-
-#### GET `/startups` - Список стартапов
-```bash
-# Базовый запрос
-curl "http://localhost:8000/startups"
-
-# С пагинацией (страница 2, 20 элементов на странице)
-curl "http://localhost:8000/startups?page=2&per_page=20"
-
-# С фильтрацией по стране
-curl "http://localhost:8000/startups?country=USA"
-
-# С поиском по названию
-curl "http://localhost:8000/startups?name=Tech"
-
-# Комбинированный запрос
-curl "http://localhost:8000/startups?country=USA&name=Tech&page=1&per_page=10"
-```
-
-**Параметры:**
-- `page` (int, default=1): Номер страницы
-- `per_page` (int, default=10, max=100): Элементов на странице
-- `country` (str, optional): Фильтр по стране
-- `name` (str, optional): Поиск по названию (содержит)
-
-**Ответ:**
-```json
-{
-  "data": [
-    {
-      "id": 1,
-      "name": "TechFlow",
-      "country": "USA",
-      "investments": [...]
-    }
-  ],
-  "meta": {
-    "total": 10,
-    "page": 1,
-    "per_page": 10,
-    "pages": 1
-  }
-}
-```
-
-#### GET `/startups/{id}` - Информация о конкретном стартапе
-```bash
-curl "http://localhost:8000/startups/1"
-```
-
----
-
-### 👥 Инвесторы (Investors)
-
-#### GET `/investors` - Список инвесторов
-```bash
-# Базовый запрос
-curl "http://localhost:8000/investors"
-
-# С фильтрацией по названию
-curl "http://localhost:8000/investors?name=Sequoia"
-
-# С пагинацией
-curl "http://localhost:8000/investors?page=1&per_page=10"
-```
-
-**Параметры:**
-- `page` (int, default=1)
-- `per_page` (int, default=10, max=100)
-- `name` (str, optional): Поиск по названию
-
-#### GET `/investors/{id}` - Информация об инвесторе
-```bash
-curl "http://localhost:8000/investors/1"
-```
-
----
-
-### 💰 Инвестиции (Investments)
-
-#### GET `/investments` - Список инвестиций
-```bash
-# Всички инвестиции
-curl "http://localhost:8000/investments"
-
-# Инвестиции в конкретный стартап
-curl "http://localhost:8000/investments?startup_id=1"
-
-# Инвестиции от конкретного инвестора
-curl "http://localhost:8000/investments?investor_id=1"
-
-# Инвестиции определенного раунда
-curl "http://localhost:8000/investments?round=Series%20A"
-
-# Инвестиции в диапазоне сумм
-curl "http://localhost:8000/investments?min_amount=100000&max_amount=1000000"
-
-# Комбинированный запрос
-curl "http://localhost:8000/investments?startup_id=1&round=Seed&min_amount=100000"
-```
-
-**Параметры:**
-- `page` (int, default=1)
-- `per_page` (int, default=10, max=100)
-- `startup_id` (int, optional): Фильтр по стартапу
-- `investor_id` (int, optional): Фильтр по инвестору
-- `round` (str, optional): Фильтр по раунду (Seed, Series A, etc.)
-- `min_amount` (float, optional): Минимальная сумма
-- `max_amount` (float, optional): Максимальная сумма
-
-**Ответ:**
-```json
-{
-  "data": [
-    {
-      "id": 1,
-      "startup_id": 1,
-      "investor_id": 1,
-      "round": "Seed",
-      "amount_usd": 100000.0,
-      "announced_date": null
-    }
-  ],
-  "meta": {
-    "total": 25,
-    "page": 1,
-    "per_page": 10,
-    "pages": 3
-  }
-}
-```
-
-#### GET `/investments/{id}` - Информация об инвестиции
-```bash
-curl "http://localhost:8000/investments/1"
-```
-
----
-
-### 📊 Статистика (Statistics)
-
-#### GET `/statistics` - Общая статистика
-```bash
-curl "http://localhost:8000/statistics"
-```
-
-**Ответ:**
-```json
-{
-  "summary": {
-    "total_startups": 10,
-    "total_investors": 10,
-    "total_investments": 30
-  },
-  "investment_stats": {
-    "total_amount_usd": 5250000.0,
-    "average_amount_usd": 175000.0
-  },
-  "top_startups": [
-    {
-      "name": "TechFlow",
-      "total_investment_usd": 1000000.0
-    }
-  ]
-}
-```
-
----
-
-## 📖 Интерактивная документация
-
-Откройте в браузере:
-
-- **Swagger UI:** http://localhost:8000/docs
-- **ReDoc:** http://localhost:8000/redoc
-- **OpenAPI JSON:** http://localhost:8000/openapi.json
-
----
-
-## 🔧 Дополнительные команды
-
-### Запуск сборщика данных (Collector)
-```bash
-# Одноразовый сбор с enhanced_collector
-python enhanced_collector.py
-
-# Или с автоматизацией (Scheduler)
-python scheduler_main.py
-```
-
-### Нормализация данных
-```bash
-python normalizer.py
-```
-
-### Проверка моделей
-```bash
-python check_models.py
-```
-
-### Интегрированное тестирование
-```bash
-python test_integration.py
-```
-
----
-
-## 📁 Структура проекта
-
-```
-backend-pro-main/
-├── app/                          # FastAPI приложение (Неделя 7)
-│   ├── main.py                   # REST API с эндпоинтами ⭐
-│   ├── db.py                     # Конфигурация БД
-│   ├── __init__.py
-│   ├── requirements.txt
-│   └── models/                   # SQLAlchemy модели
-│       ├── __init__.py
-│       ├── base.py
-│       ├── startup.py
-│       ├── investor.py
-│       └── investment.py
-│
-├── alembic/                      # Миграции БД
-│   ├── env.py                    # Конфигурация Alembic
-│   ├── versions/
-│   │   └── be668d3b47b0_init_models.py
-│   └── README
-│
-├── collector.py                  # Базовый сборщик (Часть 1)
-├── enhanced_collector.py         # Улучшенный сборщик (Часть 2) ⭐
-├── normalizer.py                 # Нормализация и обработка ⭐
-├── scheduler_main.py             # Автоматизация (Scheduler) ⭐
-├── models.py                     # Legacy модели (для совместимости)
-├── check_models.py               # Проверка моделей
-├── test_integration.py           # Интегрированные тесты
-│
-├── init_db.py                    # Инициализация БД ⭐
-├── run_local.sh                  # Скрипт запуска (Linux/Mac)
-├── run_local.bat                 # Скрипт запуска (Windows)
-│
-├── .env                          # Переменные окружения ⭐
-├── .gitignore                    # Git игнорирование
-├── requirements.txt              # Python зависимости
-├── docker-compose.yml            # Docker Compose конфигурация
-├── Dockerfile                    # Docker образ
-├── alembic.ini                   # Alembic конфигурация
-│
-├── README.md                     # Этот файл
-├── IMPLEMENTATION_GUIDE.md       # Подробное описание реализации
-├── COMPLETION_REPORT.md          # Отчет о завершении
-└── Диаграмма.drawio.pdf          # ER-диаграмма БД
-```
-
-⭐ = Новые/обновленные файлы
-
----
-
-## ✅ Чек-лист завершения
-
-- [x] **Неделя 1:** Планирование и анализ
-- [x] **Неделя 2:** Настройка окружения
-- [x] **Неделя 3:** Проектирование БД
-- [x] **Неделя 4:** Сбор данных (Часть 1)
-- [x] **Неделя 5:** Сбор данных (Часть 2) + Scheduler
-- [x] **Неделя 6:** Обработка и нормализация
-- [x] **Неделя 7:** REST API с пагинацией и фильтрацией
-
-**🎉 ПРОЕКТ ПОЛНОСТЬЮ ЗАВЕРШЕН И ГОТОВ К РАЗВЕРТЫВАНИЮ**
-
----
-
-## 🐛 Решение проблем
-
-### PostgreSQL не подключается
-1. Убедитесь что PostgreSQL запущена
-2. Проверьте переменные окружения в `.env`
-3. Используйте правильный DATABASE_URL: `postgresql+psycopg://postgres:postgres@localhost:5432/invest_db`
-
-### Port 8000 уже занят
-```bash
-# Запустить на другом порту
-uvicorn app.main:app --port 8001
-```
-
-### Импорт модулей не работает
-```bash
-# Убедитесь что находитесь в корне проекта
-cd backend-pro-main
-
-# Убедитесь что виртуальное окружение активировано
-source venv/bin/activate  # Linux/Mac
-# или
-venv\Scripts\activate     # Windows
-```
-
----
-
-## 📞 Контактная информация
-
-**GitHub Repository:** https://github.com/clifttt/backend-pro
+## 🛡 CI/CD
+
+В проекте настроен **GitHub Actions**. На каждый пуш или PR:
+1.  Проверяется стиль кода (`flake8`).
+2.  Собирается Docker-образ.
+3.  Проверяется корректность запуска приложения в контейнере.
 
 ---
 
 ## 📝 Лицензия
 
-MIT License - Свободно используйте, модифицируйте и распространяйте.
-
----
-
-**Дата завершения:** 28 февраля 2026
-**Версия:** 1.0.0
-**Статус:** ✅ Production Ready
+Проект распространяется под лицензией MIT.
