@@ -1,6 +1,6 @@
 from fastapi import FastAPI, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import or_, and_, func
+from sqlalchemy import or_, func
 from typing import List, Optional
 from pydantic import BaseModel, Field
 from datetime import date
@@ -591,13 +591,15 @@ def get_investment(investment_id: int, db: Session = Depends(get_db)):
 @app.get("/search", response_model=UnifiedSearchResponse, tags=["Search"])
 def unified_search(
     q: str = Query(..., min_length=1, description="Поисковое выражение"),
-    search_type: Optional[str] = Query(None, description="Тип поиска: 'startup', 'investor', 'investment' или пусто для всех"),
+    search_type: Optional[str] = Query(
+        None, description="Тип поиска: 'startup', 'investor', 'investment' или пусто для всех"
+    ),
     limit: int = Query(20, ge=1, le=100, description="Максимум результатов"),
     db: Session = Depends(get_db)
 ):
     """
     🔍 Полнотекстовый поиск по всем ресурсам
-    
+
     Выполняет поиск по названиям и описаниям стартапов, инвесторов и инвестиций.
     
     ### Параметры:
@@ -688,8 +690,6 @@ def unified_search(
 @app.get("/statistics", tags=["Statistics"])
 def get_statistics(db: Session = Depends(get_db)):
     """Получить общую статистику по БД"""
-    from sqlalchemy import func
-
     # Общие подсчеты
     startup_count = db.query(Startup).count()
     investor_count = db.query(Investor).count()

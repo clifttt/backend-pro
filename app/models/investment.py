@@ -1,6 +1,12 @@
+from __future__ import annotations
+from typing import TYPE_CHECKING
 from sqlalchemy import ForeignKey, Numeric, String, Date
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .base import Base
+
+if TYPE_CHECKING:
+    from .startup import Startup
+    from .investor import Investor
 
 
 class Investment(Base):

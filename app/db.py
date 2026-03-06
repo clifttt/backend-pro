@@ -7,7 +7,7 @@ load_dotenv()
 
 # Use DATABASE_URL_LOCAL for local development, DATABASE_URL for Docker
 DATABASE_URL = os.getenv(
-    "DATABASE_URL_LOCAL", 
+    "DATABASE_URL_LOCAL",
     "postgresql+psycopg://postgres:postgres@localhost:5432/invest_db"
 )
 
