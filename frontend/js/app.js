@@ -76,8 +76,14 @@ const app = {
 
         // Update Views
         this.views.forEach(view => {
+            if (view.id === `view-${tabId}`) return; // Don't hide the one we are switching to
             view.classList.add('hidden');
-            setTimeout(() => view.style.display = 'none', 300); // Wait for fade out
+            setTimeout(() => {
+                // Ensure it's still hidden before setting display to none
+                if (view.classList.contains('hidden')) {
+                    view.style.display = 'none';
+                }
+            }, 300); // Wait for fade out
         });
 
         const targetView = document.getElementById(`view-${tabId}`);
