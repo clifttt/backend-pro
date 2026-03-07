@@ -244,7 +244,7 @@ const app = {
             }
 
             return `
-                <div class="search-item ${badgeClass}">
+                <div class="search-item ${badgeClass}" onclick="app.fetchAndShowModal('${item.type}s', ${item.id})">
                     <div class="search-item-info">
                         <h3>${icon} ${item.name}</h3>
                         <p>${subtitle}</p>
@@ -257,7 +257,7 @@ const app = {
 
     renderStartups(startups) {
         this.startupsContainer.innerHTML = startups.map(startup => `
-            <div class="card">
+            <div class="card" onclick="app.fetchAndShowModal('startups', ${startup.id})">
                 <div class="card-header">
                     <h3 class="card-title">${startup.name}</h3>
                     <span class="badge ${startup.status === 'Active' ? 'success' : ''}">${startup.status || 'Unknown'}</span>
@@ -276,7 +276,7 @@ const app = {
 
     renderInvestors(investors) {
         this.investorsContainer.innerHTML = investors.map(inv => `
-            <div class="card" style="border-top: 3px solid var(--accent-secondary)">
+            <div class="card" style="border-top: 3px solid var(--accent-secondary)" onclick="app.fetchAndShowModal('investors', ${inv.id})">
                 <div class="card-header">
                     <h3 class="card-title">${inv.name}</h3>
                 </div>
@@ -295,7 +295,7 @@ const app = {
 
     renderInvestments(investments) {
         this.investmentsTbody.innerHTML = investments.map(inv => `
-            <tr>
+            <tr class="interactive" onclick="app.fetchAndShowModal('investments', ${inv.id})">
                 <td><span class="badge">${inv.round || 'Unknown'}</span></td>
                 <td style="font-weight: 500">${this.formatMoney(inv.amount_usd)}</td>
                 <td>${this.formatDate(inv.date)}</td>
@@ -323,6 +323,110 @@ const app = {
         if (meta.page < meta.pages) {
             document.getElementById(`next-${containerName}`).addEventListener('click', () => callback(meta.page + 1));
         }
+    },
+
+    // --- Modal Logic ---
+    async fetchAndShowModal(type, id) {
+        document.getElementById('modal-title').innerText = 'Loading...';
+        document.getElementById('modal-body-content').innerHTML = `
+            <div class="skeleton-row"></div><div class="skeleton-row"></div>
+        `;
+        document.getElementById('details-modal').classList.remove('hidden');
+
+        try {
+            const res = await fetch(`${API_BASE}/${type}/${id}`);
+            if (!res.ok) throw new Error('API Error');
+            const data = await res.json();
+            this.renderModalContent(type, data);
+        } catch (error) {
+            document.getElementById('modal-body-content').innerHTML = `
+                <div class="error-msg">Failed to load details.</div>
+            `;
+            document.getElementById('modal-title').innerText = 'Error';
+        }
+    },
+
+    renderModalContent(type, data) {
+        const bodyContainer = document.getElementById('modal-body-content');
+
+        if (type === 'startups') {
+            document.getElementById('modal-title').innerText = `🏢 ${data.name}`;
+            bodyContainer.innerHTML = `
+                <div class="modal-section">
+                    <span class="badge ${data.status === 'Active' ? 'success' : ''}">${data.status || 'Unknown'}</span>
+                    <p style="margin-top:1rem; color:var(--text-secondary); line-height: 1.6;">${data.description || 'No description provided.'}</p>
+                </div>
+                <div class="modal-section" style="display:flex; gap:2rem; flex-wrap:wrap;">
+                    <div><strong>Country:</strong> <br>${data.country || 'N/A'}</div>
+                    <div><strong>Founded:</strong> <br>${data.founded_year || 'N/A'}</div>
+                    <div><strong>Total Rounds:</strong> <br>${data.investments ? data.investments.length : 0}</div>
+                </div>
+                ${data.investments && data.investments.length > 0 ? `
+                <div class="modal-section">
+                    <h3>Investment Rounds Detailed</h3>
+                    <ul>
+                        ${data.investments.map(inv => `
+                            <li>
+                                <strong>${inv.round || 'Round'}</strong>: ${this.formatMoney(inv.amount_usd)}
+                                <span style="float:right; color:var(--text-secondary)">${this.formatDate(inv.date)}</span>
+                            </li>
+                        `).join('')}
+                    </ul>
+                </div>` : ''}
+            `;
+        } else if (type === 'investors') {
+            document.getElementById('modal-title').innerText = `💼 ${data.name}`;
+            bodyContainer.innerHTML = `
+                <div class="modal-section" style="display:flex; gap:2rem; flex-wrap:wrap; margin-bottom:1.5rem">
+                    <div><strong>Fund Name:</strong> <br>${data.fund_name || 'N/A'}</div>
+                    <div><strong>Focus Area:</strong> <br><span style="color:var(--accent-primary)">${data.focus_area || 'General'}</span></div>
+                </div>
+                ${data.investments && data.investments.length > 0 ? `
+                <div class="modal-section">
+                    <h3>Portfolio Details (${data.investments.length})</h3>
+                    <ul>
+                        ${data.investments.map(inv => `
+                            <li>
+                                <strong>${inv.startup ? inv.startup.name : 'Target'}</strong> - ${inv.round || 'Round'} 
+                                <span style="float:right; color:var(--accent-secondary); font-weight:600">${this.formatMoney(inv.amount_usd)}</span>
+                            </li>
+                        `).join('')}
+                    </ul>
+                </div>` : '<p>No investment data found in portfolio.</p>'}
+            `;
+        } else if (type === 'investments') {
+            document.getElementById('modal-title').innerText = `💸 Investment Round`;
+            bodyContainer.innerHTML = `
+                <div class="modal-section" style="display:grid; grid-template-columns: 1fr 1fr; gap:1.5rem; text-align:center">
+                    <div style="background:var(--bg-glass); padding:1rem; border-radius:var(--radius-md);">
+                        <p style="color:var(--text-secondary); margin-bottom:0.5rem">Investor</p>
+                        <h4>${data.investor ? data.investor.name : 'Unknown'}</h4>
+                    </div>
+                    <div style="background:var(--bg-glass); padding:1rem; border-radius:var(--radius-md);">
+                        <p style="color:var(--text-secondary); margin-bottom:0.5rem">Startup</p>
+                        <h4>${data.startup ? data.startup.name : 'Unknown'}</h4>
+                    </div>
+                </div>
+                <div class="modal-section" style="display:flex; justify-content:space-around; align-items:center; background:rgba(0,0,0,0.2); padding:1.5rem; border-radius:var(--radius-md);">
+                    <div style="text-align:center">
+                        <div style="font-size:0.9rem; color:var(--text-secondary)">Round</div>
+                        <div style="font-size:1.2rem; font-weight:500">${data.round || 'N/A'}</div>
+                    </div>
+                    <div style="text-align:center">
+                        <div style="font-size:0.9rem; color:var(--text-secondary)">Amount</div>
+                        <div style="font-size:1.5rem; font-weight:600; color:var(--accent-primary)">${this.formatMoney(data.amount_usd)}</div>
+                    </div>
+                    <div style="text-align:center">
+                        <div style="font-size:0.9rem; color:var(--text-secondary)">Date</div>
+                        <div style="font-size:1.1rem; font-weight:500">${this.formatDate(data.date)}</div>
+                    </div>
+                </div>
+            `;
+        }
+    },
+
+    closeModal() {
+        document.getElementById('details-modal').classList.add('hidden');
     }
 };
 

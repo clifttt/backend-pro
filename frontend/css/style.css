@@ -390,11 +390,13 @@ select {
     display: flex;
     flex-direction: column;
     transition: var(--transition-smooth);
+    cursor: pointer;
 }
 
 .card:hover {
     border-color: var(--border-highlight);
     transform: translateY(-2px);
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.4);
 }
 
 .card-header {
@@ -463,6 +465,13 @@ select {
     display: flex;
     justify-content: space-between;
     align-items: center;
+    cursor: pointer;
+    transition: var(--transition-fast);
+}
+
+.search-item:hover {
+    background: var(--bg-glass-hover);
+    transform: translateX(4px);
 }
 
 .search-item.startup {
@@ -518,8 +527,13 @@ select {
     font-size: 0.95rem;
 }
 
-.data-table tr:hover td {
-    background: rgba(255, 255, 255, 0.02);
+.data-table tr {
+    transition: var(--transition-fast);
+}
+
+.data-table tr.interactive:hover td {
+    background: rgba(255, 255, 255, 0.05);
+    cursor: pointer;
 }
 
 /* Pagination */
@@ -591,4 +605,94 @@ select {
     padding: 1rem;
     border-radius: var(--radius-md);
     text-align: center;
+}
+
+/* Modals */
+.modal-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(8px);
+    z-index: 1000;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    opacity: 1;
+    transition: opacity 0.3s ease;
+}
+
+.modal-overlay.hidden {
+    opacity: 0;
+    pointer-events: none;
+}
+
+.modal-content {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-xl);
+    width: 90%;
+    max-width: 600px;
+    max-height: 85vh;
+    overflow-y: auto;
+    padding: 2rem;
+    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+    transform: translateY(0);
+    transition: transform 0.3s ease;
+}
+
+.modal-overlay.hidden .modal-content {
+    transform: translateY(20px);
+}
+
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1.5rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.modal-header h2 {
+    margin-bottom: 0;
+}
+
+.modal-close {
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    font-size: 2.5rem;
+    cursor: pointer;
+    line-height: 1;
+    transition: color 0.2s;
+}
+
+.modal-close:hover {
+    color: var(--text-primary);
+}
+
+.modal-section {
+    margin-bottom: 1.5rem;
+}
+
+.modal-section h3 {
+    margin-bottom: 0.5rem;
+    color: var(--text-secondary);
+    font-size: 1rem;
+}
+
+.modal-section ul {
+    list-style: none;
+    margin-left: 0;
+    padding-left: 0;
+}
+
+.modal-section li {
+    background: rgba(255, 255, 255, 0.05);
+    margin-bottom: 0.5rem;
+    padding: 1rem;
+    border-radius: 8px;
 }
