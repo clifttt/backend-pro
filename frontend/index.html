@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Investment Intelligence Hub</title>
+    
+    <!-- Google Fonts: Outfit -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar Navigation -->
+        <aside class="sidebar">
+            <div class="logo-container">
+                <div class="logo-icon"></div>
+                <h2>InvestHub</h2>
+            </div>
+            
+            <nav class="nav-menu">
+                <button class="nav-item active" data-tab="dashboard">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
+                    Dashboard
+                </button>
+                <button class="nav-item" data-tab="search">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                    Global Search
+                </button>
+                <button class="nav-item" data-tab="startups">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"></path></svg>
+                    Startups
+                </button>
+                <button class="nav-item" data-tab="investors">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
+                    Investors
+                </button>
+                <button class="nav-item" data-tab="investments">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"></line><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>
+                    Investments
+                </button>
+            </nav>
+            
+            <div class="sidebar-footer">
+                <div class="status-indicator online"></div>
+                <span>API Status: Online</span>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Header -->
+            <header class="top-header">
+                <div class="search-bar" id="quick-search">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                    <input type="text" placeholder="Quick search for startups, investors or rounds..." id="global-search-input">
+                </div>
+                <div class="user-profile">
+                    <div class="avatar">👨‍💻</div>
+                    <span>Admin User</span>
+                </div>
+            </header>
+
+            <!-- Views Container -->
+            <div class="views-container">
+                
+                <!-- Dashboard View -->
+                <section id="view-dashboard" class="view active">
+                    <div class="header-with-actions">
+                        <h1>Market Summary</h1>
+                        <button class="btn-primary" onclick="app.fetchStats()">Refresh Data</button>
+                    </div>
+                    
+                    <div class="stats-grid" id="stats-container">
+                        <!-- Stats Cards will be injected here -->
+                        <div class="stat-card skeleton"></div>
+                        <div class="stat-card skeleton"></div>
+                        <div class="stat-card skeleton"></div>
+                        <div class="stat-card skeleton"></div>
+                    </div>
+
+                    <div class="dashboard-widgets">
+                        <div class="widget">
+                            <h2>Top Funded Startups</h2>
+                            <div class="top-startups-list" id="top-startups-container">
+                                <!-- Top startups injected here -->
+                                <div class="skeleton-row"></div>
+                                <div class="skeleton-row"></div>
+                                <div class="skeleton-row"></div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Search View -->
+                <section id="view-search" class="view hidden">
+                    <h1>Global Search Results</h1>
+                    <p class="subtitle" id="search-meta">Type to search across everything...</p>
+                    
+                    <div class="search-results-grid" id="search-results-container">
+                        <!-- Search results injected here -->
+                    </div>
+                </section>
+
+                <!-- Startups View -->
+                <section id="view-startups" class="view hidden">
+                    <div class="header-with-actions">
+                        <h1>Startups Directory</h1>
+                        <div class="filters">
+                            <select id="startup-sort" onchange="app.fetchStartups()">
+                                <option value="name">Sort by Name</option>
+                                <option value="founded_year">Sort by Founded Year</option>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <div class="data-grid" id="startups-container">
+                        <!-- Startup cards injected here -->
+                    </div>
+                    
+                    <div class="pagination" id="startups-pagination"></div>
+                </section>
+
+                <!-- Investors View -->
+                <section id="view-investors" class="view hidden">
+                    <h1>Investors & Funds</h1>
+                    <div class="data-grid" id="investors-container">
+                        <!-- Investor cards injected here -->
+                    </div>
+                    <div class="pagination" id="investors-pagination"></div>
+                </section>
+
+                <!-- Investments View -->
+                <section id="view-investments" class="view hidden">
+                    <h1>Investment Rounds</h1>
+                    <div class="table-container">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Round</th>
+                                    <th>Amount (USD)</th>
+                                    <th>Date</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody id="investments-tbody">
+                                <!-- Table rows injected here -->
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="pagination" id="investments-pagination"></div>
+                </section>
+
+            </div>
+        </main>
+    </div>
+
+    <!-- Application Logic -->
+    <script src="js/app.js"></script>
+</body>
+</html>

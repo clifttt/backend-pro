@@ -8,6 +8,7 @@ from enum import Enum
 
 from app.db import get_db, engine
 from app.models import Base, Startup, Investor, Investment
+from fastapi.middleware.cors import CORSMiddleware
 
 # Создаем таблицы при старте
 Base.metadata.create_all(bind=engine)
@@ -45,6 +46,15 @@ app = FastAPI(
         {"name": "Search", "description": "Полнотекстовый поиск"},
         {"name": "Statistics", "description": "Аналитика и статистика"},
     ]
+)
+
+# Настройка CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Разрешаем запросы с любых доменов для локальной разработки
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
