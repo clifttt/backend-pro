@@ -13,6 +13,9 @@
 
     <!-- Custom CSS -->
     <link rel="stylesheet" href="css/style.css">
+
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 
 <body>
@@ -107,9 +110,16 @@
                         <div class="stat-card skeleton"></div>
                     </div>
 
-                    <div class="dashboard-widgets">
+                    <div class="dashboard-widgets charts-container">
+                        <div class="chart-widget widget">
+                            <h2>Top 5 Funded Startups</h2>
+                            <div style="position: relative; height: 300px; width: 100%;">
+                                <canvas id="topStartupsChart"></canvas>
+                            </div>
+                        </div>
+
                         <div class="widget">
-                            <h2>Top Funded Startups</h2>
+                            <h2>Highest Funded List</h2>
                             <div class="top-startups-list" id="top-startups-container">
                                 <!-- Top startups injected here -->
                                 <div class="skeleton-row"></div>

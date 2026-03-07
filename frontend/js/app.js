@@ -203,7 +203,7 @@ const app = {
         `;
 
         this.topStartupsContainer.innerHTML = data.top_startups.map((s, i) => `
-            <div class="search-item startup" style="margin-bottom: 0.5rem">
+            <div class="search-item startup fade-in-up" style="margin-bottom: 0.5rem; animation-delay: ${i * 0.1}s">
                 <div class="search-item-info">
                     <h3>#${i + 1} ${s.name}</h3>
                     <p>Total Raised</p>
@@ -213,6 +213,8 @@ const app = {
                 </div>
             </div>
         `).join('');
+
+        this.renderChart(data.top_startups);
     },
 
     renderSearchResults(results, total, query) {
@@ -226,7 +228,7 @@ const app = {
 
         meta.innerHTML = `Found ${total} result${total > 1 ? 's' : ''} for "<b>${query}</b>"`;
 
-        this.searchResultsContainer.innerHTML = results.map(item => {
+        this.searchResultsContainer.innerHTML = results.map((item, index) => {
             let badgeClass = item.type;
             let icon = '';
             let subtitle = '';
@@ -244,7 +246,7 @@ const app = {
             }
 
             return `
-                <div class="search-item ${badgeClass}" onclick="app.fetchAndShowModal('${item.type}s', ${item.id})">
+                <div class="search-item ${badgeClass} fade-in-up" style="animation-delay: ${index * 0.05}s" onclick="app.fetchAndShowModal('${item.type}s', ${item.id})">
                     <div class="search-item-info">
                         <h3>${icon} ${item.name}</h3>
                         <p>${subtitle}</p>
@@ -256,8 +258,8 @@ const app = {
     },
 
     renderStartups(startups) {
-        this.startupsContainer.innerHTML = startups.map(startup => `
-            <div class="card" onclick="app.fetchAndShowModal('startups', ${startup.id})">
+        this.startupsContainer.innerHTML = startups.map((startup, i) => `
+            <div class="card fade-in-up" style="animation-delay: ${i * 0.05}s" onclick="app.fetchAndShowModal('startups', ${startup.id})">
                 <div class="card-header">
                     <h3 class="card-title">${startup.name}</h3>
                     <span class="badge ${startup.status === 'Active' ? 'success' : ''}">${startup.status || 'Unknown'}</span>
@@ -268,15 +270,15 @@ const app = {
                 <div class="card-meta">
                     <span>🌍 ${startup.country || 'Global'}</span>
                     <span>📅 ${startup.founded_year || 'N/A'}</span>
-                    <span>💸 ${startup.investments.length} Rounds</span>
+                    <span>💸 ${startup.investments ? startup.investments.length : 0} Rounds</span>
                 </div>
             </div>
         `).join('');
     },
 
     renderInvestors(investors) {
-        this.investorsContainer.innerHTML = investors.map(inv => `
-            <div class="card" style="border-top: 3px solid var(--accent-secondary)" onclick="app.fetchAndShowModal('investors', ${inv.id})">
+        this.investorsContainer.innerHTML = investors.map((inv, i) => `
+            <div class="card fade-in-up" style="border-top: 3px solid var(--accent-secondary); animation-delay: ${i * 0.05}s" onclick="app.fetchAndShowModal('investors', ${inv.id})">
                 <div class="card-header">
                     <h3 class="card-title">${inv.name}</h3>
                 </div>
@@ -287,15 +289,15 @@ const app = {
                     <p><strong>Investment Focus:</strong><br> ${inv.focus_area || 'General Tech'}</p>
                 </div>
                 <div class="card-meta">
-                    <span>Portfolio: ${inv.investments.length} Investments</span>
+                    <span>Portfolio: ${inv.investments ? inv.investments.length : 0} Investments</span>
                 </div>
             </div>
         `).join('');
     },
 
     renderInvestments(investments) {
-        this.investmentsTbody.innerHTML = investments.map(inv => `
-            <tr class="interactive" onclick="app.fetchAndShowModal('investments', ${inv.id})">
+        this.investmentsTbody.innerHTML = investments.map((inv, i) => `
+            <tr class="interactive fade-in-up" style="animation-delay: ${i * 0.03}s" onclick="app.fetchAndShowModal('investments', ${inv.id})">
                 <td><span class="badge">${inv.round || 'Unknown'}</span></td>
                 <td style="font-weight: 500">${this.formatMoney(inv.amount_usd)}</td>
                 <td>${this.formatDate(inv.date)}</td>
@@ -311,18 +313,105 @@ const app = {
             return;
         }
 
+        let pagesHtml = '';
+        let startPage = Math.max(1, meta.page - 2);
+        let endPage = Math.min(meta.pages, startPage + 4);
+
+        if (endPage - startPage < 4) {
+            startPage = Math.max(1, endPage - 4);
+        }
+
+        if (startPage > 1) {
+            pagesHtml += `<button class="btn-page" data-page="1">1</button>`;
+            if (startPage > 2) pagesHtml += `<span class="page-ellipsis">...</span>`;
+        }
+
+        for (let i = startPage; i <= endPage; i++) {
+            pagesHtml += `<button class="btn-page ${i === meta.page ? 'active' : ''}" data-page="${i}">${i}</button>`;
+        }
+
+        if (endPage < meta.pages) {
+            if (endPage < meta.pages - 1) pagesHtml += `<span class="page-ellipsis">...</span>`;
+            pagesHtml += `<button class="btn-page" data-page="${meta.pages}">${meta.pages}</button>`;
+        }
+
         container.innerHTML = `
-            <button class="btn-page" ${meta.page === 1 ? 'disabled' : ''} id="prev-${containerName}">Previous</button>
-            <span class="page-info">Page ${meta.page} of ${meta.pages}</span>
-            <button class="btn-page" ${meta.page === meta.pages ? 'disabled' : ''} id="next-${containerName}">Next</button>
+            <button class="btn-page nav-btn" ${meta.page === 1 ? 'disabled' : ''} data-page="${meta.page - 1}">Prev</button>
+            <div class="page-numbers">${pagesHtml}</div>
+            <button class="btn-page nav-btn" ${meta.page === meta.pages ? 'disabled' : ''} data-page="${meta.page + 1}">Next</button>
         `;
 
-        if (meta.page > 1) {
-            document.getElementById(`prev-${containerName}`).addEventListener('click', () => callback(meta.page - 1));
+        container.querySelectorAll('.btn-page:not(:disabled):not(.active)').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const p = parseInt(e.currentTarget.dataset.page);
+                if (p && !isNaN(p)) callback(p);
+            });
+        });
+    },
+
+    renderChart(topStartups) {
+        const ctx = document.getElementById('topStartupsChart');
+        if (!ctx) return;
+
+        if (this.statsChart) {
+            this.statsChart.destroy();
         }
-        if (meta.page < meta.pages) {
-            document.getElementById(`next-${containerName}`).addEventListener('click', () => callback(meta.page + 1));
-        }
+
+        const labels = topStartups.map(s => s.name);
+        const values = topStartups.map(s => s.total_investment_usd);
+
+        const gradient = ctx.getContext('2d').createLinearGradient(0, 0, 0, 300);
+        gradient.addColorStop(0, 'rgba(59, 130, 246, 0.8)');
+        gradient.addColorStop(1, 'rgba(139, 92, 246, 0.1)');
+
+        this.statsChart = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Total Raised',
+                    data: values,
+                    backgroundColor: gradient,
+                    borderRadius: 6,
+                    borderWidth: 0,
+                    barPercentage: 0.7
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        backgroundColor: 'rgba(10, 14, 23, 0.95)',
+                        titleFont: { family: 'Outfit', size: 14 },
+                        bodyFont: { family: 'Outfit', size: 13 },
+                        padding: 12,
+                        cornerRadius: 8,
+                        borderColor: 'rgba(255,255,255,0.1)',
+                        borderWidth: 1,
+                        callbacks: {
+                            label: (context) => this.formatMoney(context.raw)
+                        }
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        grid: { color: 'rgba(255, 255, 255, 0.05)' },
+                        ticks: {
+                            color: '#94a3b8',
+                            font: { family: 'Outfit' },
+                            callback: (value) => '$' + (value / 1000000) + 'M'
+                        }
+                    },
+                    x: {
+                        grid: { display: false },
+                        ticks: { color: '#94a3b8', font: { family: 'Outfit' } }
+                    }
+                }
+            }
+        });
     },
 
     // --- Modal Logic ---
