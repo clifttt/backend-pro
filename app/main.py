@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import or_, func
 from typing import List, Optional
 from pydantic import BaseModel, Field
-from datetime import date
+import datetime
 from enum import Enum
 
 from app.db import get_db, engine
@@ -67,7 +67,7 @@ class InvestmentRead(BaseModel):
     investor_id: int = Field(..., description="ID инвестора")
     round: Optional[str] = Field(None, description="Раунд финансирования (например, 'Series A', 'Seed')")
     amount_usd: Optional[float] = Field(None, description="Сумма инвестиции в USD")
-    date: Optional[date] = Field(None, description="Дата объявления инвестиции")
+    date: Optional[datetime.date] = Field(None, description="Дата объявления инвестиции")
     status: Optional[str] = Field(None, description="Статус инвестиции")
 
     model_config = {
@@ -84,9 +84,6 @@ class InvestmentRead(BaseModel):
             }
         }
     }
-
-    class Config:
-        from_attributes = True
 
 
 class InvestorRead(BaseModel):
@@ -119,9 +116,6 @@ class InvestorRead(BaseModel):
             }
         }
     }
-
-    class Config:
-        from_attributes = True
 
 
 class StartupRead(BaseModel):
@@ -158,9 +152,6 @@ class StartupRead(BaseModel):
             }
         }
     }
-
-    class Config:
-        from_attributes = True
 
 
 class PaginationMeta(BaseModel):
