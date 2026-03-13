@@ -106,12 +106,11 @@ class EnhancedDataCollector:
     """Улучшенный коллектор данных с защитой от блокировок"""
 
     STARTUP_NAMES = [
-        "TechFlow", "GreenEnergy", "AI-Core", "CyberShield", "FinPrime",
-        "CloudWave", "DataVault", "NeuralNet", "QuantumLeap", "SecureVault",
-        "BlockChain Pro", "RoboTech", "Space Ventures", "BioHealth", "EduTech",
-        "AgriSmart", "ClimateAI", "DeepMind Analytics", "HealthBot", "LogiChain",
-        "MobiPay", "NanoTech", "OceanData", "PharmaX", "QuickShip",
-        "RealtyAI", "SkyDrone", "TeleHealth", "UniCloud", "VoiceAI",
+        "OpenAI", "Stripe", "Databricks", "SpaceX", "Epic Games", "Canva",
+        "Plaid", "Airtable", "Figma", "Brex", "Discord", "Revolut",
+        "Scale AI", "Rippling", "Anthropic", "Carta", "Ramp", "Celonis",
+        "Miro", "Notion", "Gusto", "Automattic", "Checkr", "Gong",
+        "Navan", "Deel", "Anduril", "Cohere", "Hugging Face", "Midjourney"
     ]
 
     INVESTOR_NAMES = [

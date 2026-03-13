@@ -1,4 +1,5 @@
-from fastapi import FastAPI, Depends, HTTPException, Query
+from fastapi import FastAPI, Depends, HTTPException, Query, status
+from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, func
 from typing import List, Optional
@@ -9,6 +10,7 @@ from enum import Enum
 from app.db import get_db, engine
 from app.models import Base, Startup, Investor, Investment
 from fastapi.middleware.cors import CORSMiddleware
+from app.auth import create_access_token, get_current_user, ACCESS_TOKEN_EXPIRE_MINUTES
 
 # Создаем таблицы при старте
 Base.metadata.create_all(bind=engine)
@@ -118,6 +120,14 @@ class InvestorRead(BaseModel):
     }
 
 
+class StartupCreate(BaseModel):
+    name: str = Field(..., description="Название стартапа")
+    country: Optional[str] = Field(None, description="Страна базирования стартапа")
+    description: Optional[str] = Field(None, description="Описание стартапа")
+    founded_year: Optional[int] = Field(None, description="Год основания")
+    status: Optional[str] = Field("Active", description="Статус стартапа")
+
+# Model configurations down below...
 class StartupRead(BaseModel):
     """Модель для чтения данных о стартапе"""
     id: int = Field(..., description="Уникальный идентификатор стартапа")
@@ -336,6 +346,22 @@ def read_root():
     }
 
 
+@app.post("/token", tags=["Auth"])
+def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
+    # Простая заглушка - принимаем admin:secret
+    if form_data.username != "admin" or form_data.password != "secret":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    access_token_expires = datetime.timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": form_data.username}, expires_delta=access_token_expires
+    )
+    return {"access_token": access_token, "token_type": "bearer"}
+
+
 @app.get("/health", tags=["Info"])
 def health_check(db: Session = Depends(get_db)):
     """Проверка здоровья сервера и БД"""
@@ -359,6 +385,24 @@ def health_check(db: Session = Depends(get_db)):
 
 
 # ==================== Startups Endpoints ====================
+
+@app.post("/startups", response_model=StartupRead, status_code=status.HTTP_201_CREATED, tags=["Startups"])
+def create_startup(startup: StartupCreate, db: Session = Depends(get_db), current_user: str = Depends(get_current_user)):
+    """
+    Создать новый стартап. 
+    **Внимание**: Это защищенный метод, требуется JWT токен!
+    """
+    db_startup = Startup(
+        name=startup.name,
+        country=startup.country,
+        description=startup.description,
+        founded_year=startup.founded_year,
+        status=startup.status
+    )
+    db.add(db_startup)
+    db.commit()
+    db.refresh(db_startup)
+    return StartupRead.from_orm(db_startup)
 
 @app.get("/startups", response_model=StartupListResponse, tags=["Startups"])
 def get_startups(

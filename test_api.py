@@ -56,6 +56,8 @@ def test_endpoint(method: str, endpoint: str, expected_status: int = 200, params
         success = response.status_code == expected_status
         
         if success:
+            if endpoint in ["/docs", "/redoc"]:
+                return True, "HTML Page"
             data = response.json()
             return True, json.dumps(data, indent=2, ensure_ascii=False)[:200] + "..."
         else:

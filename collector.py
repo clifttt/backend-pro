@@ -21,7 +21,7 @@ def run_collector():
     # В реальном сценарии здесь будет requests.get() и BeautifulSoup
     print("Начало сбора данных...")
     
-    names = ["TechFlow", "GreenEnergy", "AI-Core", "CyberShield", "FinPrime"]
+    names = ["OpenAI", "Stripe", "Databricks", "SpaceX", "Epic Games", "Canva", "Plaid", "Airtable", "Figma", "Notion"]
     investor_names = ["Sequoia", "Y Combinator", "Tiger Global", "SoftBank", "Accel"]
     
     for i in range(55):  # Минимум 50 записей
