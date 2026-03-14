@@ -12,3 +12,14 @@ lxml==5.1.0
 pytz==2024.1
 pydantic==2.5.3
 flake8==7.0.0
+python-multipart==0.0.9
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+# Week 12: Testing
+pytest==8.1.1
+pytest-cov==5.0.0
+httpx==0.25.2
+# Week 13: Load testing
+locust==2.29.0
+# Week 14: Monitoring
+prometheus-fastapi-instrumentator==7.0.0

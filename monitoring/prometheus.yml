@@ -1,0 +1,34 @@
+# Prometheus scrape configuration
+# Week 14: Monitoring setup for Investment Intelligence Hub
+
+global:
+  scrape_interval: 15s      # Scrape every 15 seconds
+  evaluation_interval: 15s  # Evaluate rules every 15 seconds
+
+# Alerting rules (none configured for demo)
+alerting:
+  alertmanagers: []
+
+rule_files: []
+
+scrape_configs:
+  # Prometheus itself
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # FastAPI application — exposes /metrics via prometheus-fastapi-instrumentator
+  - job_name: "investment_hub_api"
+    metrics_path: "/metrics"
+    scrape_interval: 10s
+    static_configs:
+      - targets: ["web:8000"]
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: "investment-hub"
+
+  # (Optional) PostgreSQL exporter — if postgres_exporter container added later
+  # - job_name: "postgres"
+  #   static_configs:
+  #     - targets: ["postgres_exporter:9187"]

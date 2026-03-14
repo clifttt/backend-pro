@@ -1,16 +1,24 @@
 from fastapi import FastAPI, Depends, HTTPException, Query, status
+from fastapi.responses import JSONResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
+from sqlalchemy.orm import joinedload
 from sqlalchemy import or_, func
 from typing import List, Optional
 from pydantic import BaseModel, Field
 import datetime
+import time
 from enum import Enum
 
 from app.db import get_db, engine
 from app.models import Base, Startup, Investor, Investment
 from fastapi.middleware.cors import CORSMiddleware
 from app.auth import create_access_token, get_current_user, ACCESS_TOKEN_EXPIRE_MINUTES
+from prometheus_fastapi_instrumentator import Instrumentator
+
+# ==================== Simple In-Memory Stats Cache ====================
+_stats_cache: dict = {"data": None, "expires_at": 0.0}
+_STATS_TTL_SECONDS = 60  # Cache statistics for 60 seconds
 
 # Создаем таблицы при старте
 Base.metadata.create_all(bind=engine)
@@ -58,6 +66,19 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ==================== Prometheus Metrics ====================
+# Exposes /metrics endpoint for Prometheus scraping (Week 14)
+Instrumentator(
+    should_group_status_codes=False,
+    should_ignore_untemplated=True,
+    should_respect_env_var=True,
+    should_instrument_requests_inprogress=True,
+    excluded_handlers=["/metrics"],
+    env_var_name="ENABLE_METRICS",
+    inprogress_name="http_requests_inprogress",
+    inprogress_labels=True,
+).instrument(app).expose(app, include_in_schema=True, tags=["Monitoring"])
 
 
 # ==================== Pydantic Models (для JSON ответов) ====================
@@ -425,7 +446,8 @@ def get_startups(
     - **sort_by**: Поле для сортировки: 'name' или 'founded_year' (по умолчанию 'name')
     - **sort_order**: 'asc' для возрастания или 'desc' для убывания (по умолчанию 'asc')
     """
-    query = db.query(Startup)
+    # Use joinedload to prevent N+1 queries when loading startup.investments
+    query = db.query(Startup).options(joinedload(Startup.investments))
 
     # Применяем фильтры
     if country:
@@ -444,8 +466,13 @@ def get_startups(
     else:
         query = query.order_by(order_column.asc())
 
-    # Получаем общее количество
-    total = query.count()
+    # Получаем общее количество (subquery to avoid count issues with joinedload)
+    count_query = db.query(func.count(Startup.id))
+    if country:
+        count_query = count_query.filter(Startup.country == country)
+    if name:
+        count_query = count_query.filter(Startup.name.ilike(f"%{name}%"))
+    total = count_query.scalar()
 
     # Применяем пагинацию
     skip = (page - 1) * per_page
@@ -468,7 +495,12 @@ def get_startups(
 @app.get("/startups/{startup_id}", response_model=StartupRead, tags=["Startups"])
 def get_startup(startup_id: int, db: Session = Depends(get_db)):
     """Получить информацию о конкретном стартапе по ID"""
-    startup = db.query(Startup).filter(Startup.id == startup_id).first()
+    startup = (
+        db.query(Startup)
+        .options(joinedload(Startup.investments))
+        .filter(Startup.id == startup_id)
+        .first()
+    )
 
     if not startup:
         raise HTTPException(status_code=404, detail=f"Startup with ID {startup_id} not found")
@@ -497,7 +529,8 @@ def get_investors(
     - **sort_by**: Поле для сортировки (по умолчанию 'name')
     - **sort_order**: 'asc' для возрастания или 'desc' для убывания (по умолчанию 'asc')
     """
-    query = db.query(Investor)
+    # Use joinedload to prevent N+1 queries
+    query = db.query(Investor).options(joinedload(Investor.investments))
 
     # Применяем фильтры
     if name:
@@ -510,7 +543,10 @@ def get_investors(
         query = query.order_by(Investor.name.asc())
 
     # Получаем общее количество
-    total = query.count()
+    count_query = db.query(func.count(Investor.id))
+    if name:
+        count_query = count_query.filter(Investor.name.ilike(f"%{name}%"))
+    total = count_query.scalar()
 
     # Применяем пагинацию
     skip = (page - 1) * per_page
@@ -533,7 +569,12 @@ def get_investors(
 @app.get("/investors/{investor_id}", response_model=InvestorRead, tags=["Investors"])
 def get_investor(investor_id: int, db: Session = Depends(get_db)):
     """Получить информацию об инвесторе по ID"""
-    investor = db.query(Investor).filter(Investor.id == investor_id).first()
+    investor = (
+        db.query(Investor)
+        .options(joinedload(Investor.investments))
+        .filter(Investor.id == investor_id)
+        .first()
+    )
 
     if not investor:
         raise HTTPException(status_code=404, detail=f"Investor with ID {investor_id} not found")
@@ -734,11 +775,18 @@ def unified_search(
 
 @app.get("/statistics", tags=["Statistics"])
 def get_statistics(db: Session = Depends(get_db)):
-    """Получить общую статистику по БД"""
+    """Получить общую статистику по БД (кэшируется на 60 секунд)"""
+    global _stats_cache
+    now = time.time()
+
+    # Return cached result if still fresh
+    if _stats_cache["data"] is not None and now < _stats_cache["expires_at"]:
+        return _stats_cache["data"]
+
     # Общие подсчеты
-    startup_count = db.query(Startup).count()
-    investor_count = db.query(Investor).count()
-    investment_count = db.query(Investment).count()
+    startup_count = db.query(func.count(Startup.id)).scalar()
+    investor_count = db.query(func.count(Investor.id)).scalar()
+    investment_count = db.query(func.count(Investment.id)).scalar()
 
     # Статистика по инвестициям
     total_investment = db.query(func.sum(Investment.amount_usd)).scalar() or 0
@@ -752,7 +800,7 @@ def get_statistics(db: Session = Depends(get_db)):
         func.sum(Investment.amount_usd).desc()
     ).limit(5).all()
 
-    return {
+    result = {
         "summary": {
             "total_startups": startup_count,
             "total_investors": investor_count,
@@ -765,15 +813,26 @@ def get_statistics(db: Session = Depends(get_db)):
         "top_startups": [
             {"name": name, "total_investment_usd": float(amount)}
             for name, amount in top_startups
-        ]
+        ],
+        "cache": {
+            "cached": False,
+            "expires_in_seconds": _STATS_TTL_SECONDS
+        }
     }
+
+    # Store in cache
+    _stats_cache["data"] = result
+    _stats_cache["expires_at"] = now + _STATS_TTL_SECONDS
+
+    # Mark as fresh (not from cache) for the first caller
+    return result
 
 
 # ==================== Error Handlers ====================
 
 @app.exception_handler(HTTPException)
 def http_exception_handler(request, exc):
-    return {
-        "error": exc.detail,
-        "status_code": exc.status_code
-    }
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"error": exc.detail, "status_code": exc.status_code},
+    )
