@@ -1,7 +1,7 @@
 /* CSS Variables for Premium Dark Theme */
 :root {
     --bg-primary: #0a0e17;
-    --bg-secondary: #121826;
+    --bg-secondary: #0d1117;
     --bg-glass: rgba(18, 24, 38, 0.7);
     --bg-glass-hover: rgba(26, 35, 50, 0.8);
 
@@ -85,14 +85,75 @@ h3 {
     padding: 2rem 1.5rem;
     position: relative;
     z-index: 10;
+    transition: width var(--transition-smooth), padding var(--transition-smooth);
+    overflow: hidden;
 }
+
+
+.sidebar.collapsed {
+    width: 70px;
+    padding: 2rem 0.75rem;
+}
+
+.sidebar.collapsed .sidebar-title,
+.sidebar.collapsed .nav-item span,
+.sidebar.collapsed .footer-text,
+.sidebar.collapsed .footer-icon {
+    display: none;
+}
+
+.sidebar.collapsed #sidebar-toggle {
+    display: none;
+}
+
+.sidebar.collapsed .logo-container {
+    justify-content: center;
+}
+
+.sidebar.collapsed .nav-item {
+    justify-content: center;
+    padding: 12px;
+}
+
+.sidebar.collapsed .footer-item {
+    justify-content: center;
+}
+
 
 .logo-container {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 10px;
     margin-bottom: 3rem;
-    padding-left: 0.5rem;
+    padding: 0;
+}
+
+.logo-container .sidebar-title {
+    flex: 1;
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    letter-spacing: -0.01em;
+}
+
+#sidebar-toggle {
+    background: none;
+    border: none;
+    color: #3d4a5c;
+    cursor: pointer;
+    padding: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    flex-shrink: 0;
+    transition: color var(--transition-fast);
+}
+
+#sidebar-toggle:hover {
+    color: #64748b;
 }
 
 .logo-icon {
@@ -130,6 +191,7 @@ h3 {
 .nav-item svg {
     width: 20px;
     height: 20px;
+    min-width: 20px;
 }
 
 .nav-item:hover {
@@ -150,13 +212,23 @@ h3 {
 
 .sidebar-footer {
     display: flex;
-    align-items: center;
-    gap: 10px;
-    padding-top: 2rem;
+    flex-direction: column;
+    gap: 12px;
+    padding-top: 1.5rem;
     border-top: 1px solid var(--border-color);
     color: var(--text-secondary);
-    font-size: 0.9rem;
+    font-size: 0.88rem;
 }
+
+.footer-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    white-space: nowrap;
+}
+
+.footer-icon { font-size: 1rem; }
+.footer-text { color: var(--text-secondary); }
 
 .status-indicator {
     width: 8px;
@@ -215,6 +287,8 @@ h3 {
     backdrop-filter: blur(12px);
     z-index: 10;
 }
+
+
 
 .search-bar {
     display: flex;
@@ -312,6 +386,55 @@ h3 {
 .btn-primary:hover {
     transform: translateY(-2px);
     box-shadow: 0 6px 20px rgba(59, 130, 246, 0.4);
+}
+
+.btn-secondary {
+    background: var(--bg-glass);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+    padding: 10px 20px;
+    border-radius: var(--radius-md);
+    font-family: inherit;
+    font-size: 0.95rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: var(--transition-fast);
+    text-decoration: none;
+    -webkit-appearance: none;
+    appearance: none;
+}
+
+.btn-secondary:hover {
+    background: var(--bg-glass-hover);
+    border-color: var(--border-highlight);
+    transform: translateY(-2px);
+}
+
+/* Pill-style CSV download button (matches reference) */
+.btn-csv {
+    background: #1a1f2e;
+    color: #f1f5f9;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    padding: 8px 18px;
+    border-radius: 999px;
+    font-family: inherit;
+    font-size: 0.88rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: var(--transition-fast);
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    letter-spacing: 0.01em;
+    -webkit-appearance: none;
+    appearance: none;
+}
+
+.btn-csv:hover {
+    background: #252b3b;
+    border-color: rgba(255, 255, 255, 0.2);
+    color: #fff;
+    transform: translateY(-1px);
 }
 
 /* Buttons & Inputs in content */

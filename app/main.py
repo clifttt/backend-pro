@@ -1,20 +1,38 @@
-from fastapi import FastAPI, Depends, HTTPException, Query, status
+"""
+main.py — Investment Intelligence Hub API
+FastAPI application with full CRUD, JWT auth, FTS, caching, and monitoring.
+"""
+from fastapi import FastAPI, Depends, HTTPException, Query, status, Request
 from fastapi.responses import JSONResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from sqlalchemy.orm import joinedload
-from sqlalchemy import or_, func
+from sqlalchemy import or_, func, text
 from typing import List, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, EmailStr
 import datetime
 import time
+import logging
+import json
 from enum import Enum
 
 from app.db import get_db, engine
-from app.models import Base, Startup, Investor, Investment
+from app.models import Base, Startup, Investor, Investment, User
 from fastapi.middleware.cors import CORSMiddleware
-from app.auth import create_access_token, get_current_user, ACCESS_TOKEN_EXPIRE_MINUTES
+from app.auth import (
+    create_access_token,
+    get_current_user,
+    authenticate_user,
+    create_user,
+    get_user_by_username,
+    get_user_by_email,
+    ensure_default_admin,
+    ACCESS_TOKEN_EXPIRE_MINUTES,
+    UserCreate,
+    UserPublic,
+)
 from prometheus_fastapi_instrumentator import Instrumentator
+import os
 
 # ==================== Simple In-Memory Stats Cache ====================
 _stats_cache: dict = {"data": None, "expires_at": 0.0}
@@ -23,52 +41,93 @@ _STATS_TTL_SECONDS = 60  # Cache statistics for 60 seconds
 # Создаем таблицы при старте
 Base.metadata.create_all(bind=engine)
 
-# Создаем приложение с расширенной документацией
+# ==================== First-boot seed admin user ====================
+def _seed_admin():
+    """Ensure at least one admin user exists on startup."""
+    from sqlalchemy.orm import sessionmaker
+    _Session = sessionmaker(bind=engine)
+    db = _Session()
+    try:
+        ensure_default_admin(db)
+    finally:
+        db.close()
+
+_seed_admin()
+
+# ==================== Logging Configuration ====================
+logger = logging.getLogger("invest_hub")
+logger.setLevel(logging.INFO)
+stream_handler = logging.StreamHandler()
+logger.addHandler(stream_handler)
+
+# ==================== Application Setup ====================
 app = FastAPI(
     title="Investment Intelligence Hub API",
     description="""
 🚀 **Полнофункциональный REST API для анализа инвестиционных данных**
 
 ### Возможности:
-- ✅ Полнотекстовый поиск (Full-text search)
+- ✅ Полнотекстовый поиск (Full-text search via PostgreSQL tsvector)
 - ✅ Сложная фильтрация по множеству параметров
 - ✅ Сортировка по различным полям
 - ✅ Пагинация для больших результатов
 - ✅ Статистика и аналитика
+- ✅ JWT-авторизация с реальной БД пользователей
+- ✅ Регистрация и вход пользователей
 - ✅ Интерактивная документация (Swagger UI)
+- ✅ Prometheus метрики
 
 ### Основные ресурсы:
-- **Startups** - Информация о стартапах
-- **Investors** - Данные об инвесторах
-- **Investments** - История инвестиций
-- **Search** - Полнотекстовый поиск по всем ресурсам
+- **Startups** — Информация о стартапах
+- **Investors** — Данные об инвесторах
+- **Investments** — История инвестиций
+- **Search** — Полнотекстовый поиск по всем ресурсам
+- **Auth** — Регистрация, вход, профиль
 
-### Версии:
-- v1.0.0: REST API базовый уровень
-- v2.0.0: REST API продвинутый уровень (Неделя 8)
+### Auth flow:
+1. `POST /auth/register` — создать аккаунт
+2. `POST /token` — получить JWT токен
+3. Передавать `Authorization: Bearer <token>` для защищённых методов
     """,
-    version="2.0.0",
+    version="3.0.0",
     openapi_tags=[
         {"name": "Info", "description": "Основная информация о сервере"},
+        {"name": "Auth", "description": "Регистрация и авторизация"},
         {"name": "Startups", "description": "Управление стартапами"},
         {"name": "Investors", "description": "Управление инвесторами"},
         {"name": "Investments", "description": "Управление инвестициями"},
         {"name": "Search", "description": "Полнотекстовый поиск"},
         {"name": "Statistics", "description": "Аналитика и статистика"},
-    ]
+    ],
 )
 
 # Настройка CORS
+_allowed_origins = os.getenv("ALLOWED_ORIGINS", "*").split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Разрешаем запросы с любых доменов для локальной разработки
+    allow_origins=_allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Accept"],
 )
 
+# ==================== Security Headers Middleware ====================
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' cdn.jsdelivr.net; "
+        "style-src 'self' 'unsafe-inline' cdn.jsdelivr.net fonts.googleapis.com; "
+        "img-src 'self' data: fastapi.tiangolo.com;"
+    )
+    return response
+
 # ==================== Prometheus Metrics ====================
-# Exposes /metrics endpoint for Prometheus scraping (Week 14)
 Instrumentator(
     should_group_status_codes=False,
     should_ignore_untemplated=True,
@@ -80,18 +139,53 @@ Instrumentator(
     inprogress_labels=True,
 ).instrument(app).expose(app, include_in_schema=True, tags=["Monitoring"])
 
+# ==================== Logging Middleware ====================
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    start_time = time.time()
+    response = await call_next(request)
+    duration_ms = (time.time() - start_time) * 1000
 
-# ==================== Pydantic Models (для JSON ответов) ====================
+    if request.url.path not in ["/metrics", "/health"]:
+        log_data = {
+            "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "level": "INFO",
+            "method": request.method,
+            "path": request.url.path,
+            "status_code": response.status_code,
+            "duration_ms": round(duration_ms, 2),
+            "client": request.client.host if request.client else "unknown",
+        }
+        logger.info(json.dumps(log_data))
+
+    return response
+
+
+# ==================== Pydantic Models ====================
+
+class InvestorMinimal(BaseModel):
+    id: int
+    name: str
+    model_config = {"from_attributes": True}
+
+
+class StartupMinimal(BaseModel):
+    id: int
+    name: str
+    country: Optional[str] = None
+    model_config = {"from_attributes": True}
+
 
 class InvestmentRead(BaseModel):
-    """Модель для чтения данных об инвестиции"""
     id: int = Field(..., description="Уникальный идентификатор инвестиции")
     startup_id: int = Field(..., description="ID стартапа")
     investor_id: int = Field(..., description="ID инвестора")
-    round: Optional[str] = Field(None, description="Раунд финансирования (например, 'Series A', 'Seed')")
-    amount_usd: Optional[float] = Field(None, description="Сумма инвестиции в USD")
-    date: Optional[datetime.date] = Field(None, description="Дата объявления инвестиции")
-    status: Optional[str] = Field(None, description="Статус инвестиции")
+    round: Optional[str] = Field(None, description="Раунд финансирования")
+    amount_usd: Optional[float] = Field(None, description="Сумма в USD")
+    date: Optional[datetime.date] = Field(None, description="Дата")
+    status: Optional[str] = Field(None, description="Статус")
+    startup: Optional[StartupMinimal] = None
+    investor: Optional[InvestorMinimal] = None
 
     model_config = {
         "from_attributes": True,
@@ -103,61 +197,40 @@ class InvestmentRead(BaseModel):
                 "round": "Series B",
                 "amount_usd": 15000000.00,
                 "date": "2024-06-15",
-                "status": "Active"
+                "status": "Active",
             }
-        }
+        },
     }
 
 
 class InvestorRead(BaseModel):
-    """Модель для чтения данных об инвесторе"""
     id: int = Field(..., description="Уникальный идентификатор инвестора")
     name: str = Field(..., description="Имя или название инвестора")
     fund_name: Optional[str] = Field(None, description="Название фонда")
     focus_area: Optional[str] = Field(None, description="Область инвестирования")
-    investments: List[InvestmentRead] = Field(default_factory=list, description="Список инвестиций инвестора")
+    investments: List[InvestmentRead] = Field(default_factory=list)
 
-    model_config = {
-        "from_attributes": True,
-        "json_schema_extra": {
-            "example": {
-                "id": 3,
-                "name": "Sequoia Capital",
-                "fund_name": "Sequoia Capital Fund XIX",
-                "focus_area": "Technology, SaaS",
-                "investments": [
-                    {
-                        "id": 1,
-                        "startup_id": 5,
-                        "investor_id": 3,
-                        "round": "Series B",
-                        "amount_usd": 15000000.00,
-                        "date": "2024-06-15",
-                        "status": "Active"
-                    }
-                ]
-            }
-        }
-    }
+    model_config = {"from_attributes": True}
 
 
 class StartupCreate(BaseModel):
     name: str = Field(..., description="Название стартапа")
-    country: Optional[str] = Field(None, description="Страна базирования стартапа")
-    description: Optional[str] = Field(None, description="Описание стартапа")
+    country: Optional[str] = Field(None, description="Страна")
+    description: Optional[str] = Field(None, description="Описание")
     founded_year: Optional[int] = Field(None, description="Год основания")
-    status: Optional[str] = Field("Active", description="Статус стартапа")
+    status: Optional[str] = Field("Active", description="Статус")
+    source_url: Optional[str] = Field(None, description="URL источника данных")
 
-# Model configurations down below...
+
 class StartupRead(BaseModel):
-    """Модель для чтения данных о стартапе"""
-    id: int = Field(..., description="Уникальный идентификатор стартапа")
-    name: str = Field(..., description="Название стартапа")
-    country: Optional[str] = Field(None, description="Страна базирования стартапа")
-    description: Optional[str] = Field(None, description="Описание стартапа")
-    founded_year: Optional[int] = Field(None, description="Год основания")
-    status: Optional[str] = Field(None, description="Статус стартапа (Active, Acquired, etc.)")
-    investments: List[InvestmentRead] = Field(default_factory=list, description="Список инвестиций в стартап")
+    id: int = Field(..., description="ID стартапа")
+    name: str = Field(..., description="Название")
+    country: Optional[str] = Field(None)
+    description: Optional[str] = Field(None)
+    founded_year: Optional[int] = Field(None)
+    status: Optional[str] = Field(None)
+    source_url: Optional[str] = Field(None, description="Источник данных (Crunchbase/PitchBook)")
+    investments: List[InvestmentRead] = Field(default_factory=list)
 
     model_config = {
         "from_attributes": True,
@@ -169,183 +242,61 @@ class StartupRead(BaseModel):
                 "description": "AI research and deployment company",
                 "founded_year": 2015,
                 "status": "Active",
-                "investments": [
-                    {
-                        "id": 1,
-                        "startup_id": 5,
-                        "investor_id": 3,
-                        "round": "Series B",
-                        "amount_usd": 15000000.00,
-                        "date": "2024-06-15",
-                        "status": "Active"
-                    }
-                ]
+                "source_url": "https://www.crunchbase.com/organization/openai",
+                "investments": [],
             }
-        }
+        },
     }
 
 
 class PaginationMeta(BaseModel):
-    """Метаданные о пагинации"""
-    total: int = Field(..., description="Общее количество элементов")
+    total: int = Field(..., description="Всего элементов")
     page: int = Field(..., description="Текущая страница")
     per_page: int = Field(..., description="Элементов на странице")
-    pages: int = Field(..., description="Общее количество страниц")
+    pages: int = Field(..., description="Всего страниц")
 
     model_config = {
-        "json_schema_extra": {
-            "example": {
-                "total": 100,
-                "page": 1,
-                "per_page": 10,
-                "pages": 10
-            }
-        }
+        "json_schema_extra": {"example": {"total": 100, "page": 1, "per_page": 10, "pages": 10}}
     }
 
 
-# Enums для сортировки
 class SortOrder(str, Enum):
     asc = "asc"
     desc = "desc"
 
 
-# Response модели
 class StartupListResponse(BaseModel):
-    """Ответ со списком стартапов"""
-    data: List[StartupRead] = Field(..., description="Список стартапов")
-    meta: PaginationMeta = Field(..., description="Метаданные пагинации")
-
-    model_config = {
-        "json_schema_extra": {
-            "example": {
-                "data": [
-                    {
-                        "id": 5,
-                        "name": "OpenAI",
-                        "country": "USA",
-                        "investments": []
-                    },
-                    {
-                        "id": 6,
-                        "name": "Tesla",
-                        "country": "USA",
-                        "investments": []
-                    }
-                ],
-                "meta": {
-                    "total": 100,
-                    "page": 1,
-                    "per_page": 10,
-                    "pages": 10
-                }
-            }
-        }
-    }
+    data: List[StartupRead]
+    meta: PaginationMeta
 
 
 class InvestorListResponse(BaseModel):
-    """Ответ со списком инвесторов"""
-    data: List[InvestorRead] = Field(..., description="Список инвесторов")
-    meta: PaginationMeta = Field(..., description="Метаданные пагинации")
-
-    model_config = {
-        "json_schema_extra": {
-            "example": {
-                "data": [
-                    {
-                        "id": 1,
-                        "name": "Andrey Volkov",
-                        "investments": []
-                    },
-                    {
-                        "id": 3,
-                        "name": "Sequoia Capital",
-                        "investments": []
-                    }
-                ],
-                "meta": {
-                    "total": 50,
-                    "page": 1,
-                    "per_page": 10,
-                    "pages": 5
-                }
-            }
-        }
-    }
+    data: List[InvestorRead]
+    meta: PaginationMeta
 
 
 class InvestmentListResponse(BaseModel):
-    """Ответ со списком инвестиций"""
-    data: List[InvestmentRead] = Field(..., description="Список инвестиций")
-    meta: PaginationMeta = Field(..., description="Метаданные пагинации")
-
-    model_config = {
-        "json_schema_extra": {
-            "example": {
-                "data": [
-                    {
-                        "id": 1,
-                        "startup_id": 5,
-                        "investor_id": 3,
-                        "round": "Series B",
-                        "amount_usd": 15000000.00,
-                        "announced_date": "2024-06-15"
-                    }
-                ],
-                "meta": {
-                    "total": 200,
-                    "page": 1,
-                    "per_page": 10,
-                    "pages": 20
-                }
-            }
-        }
-    }
+    data: List[InvestmentRead]
+    meta: PaginationMeta
 
 
-# Модель для комбинированного поиска
 class SearchResult(BaseModel):
-    """Результат поиска"""
-    id: int = Field(..., description="Идентификатор объекта")
-    type: str = Field(..., description="Тип объекта: 'startup', 'investor' или 'investment'")
-    name: str = Field(..., description="Имя или название объекта")
-    details: dict = Field(..., description="Дополнительные детали")
+    id: int
+    type: str
+    name: str
+    details: dict
 
     model_config = {
         "json_schema_extra": {
-            "example": {
-                "id": 5,
-                "type": "startup",
-                "name": "OpenAI",
-                "details": {"country": "USA"}
-            }
+            "example": {"id": 5, "type": "startup", "name": "OpenAI", "details": {"country": "USA"}}
         }
     }
 
 
 class UnifiedSearchResponse(BaseModel):
-    """Ответ с результатами поиска"""
-    results: List[SearchResult] = Field(..., description="Список результатов поиска")
-    total: int = Field(..., description="Общее количество найденных результатов")
-    query: str = Field(..., description="Поисковый запрос")
-
-    model_config = {
-        "json_schema_extra": {
-            "example": {
-                "results": [
-                    {
-                        "id": 5,
-                        "type": "startup",
-                        "name": "OpenAI",
-                        "details": {"country": "USA"}
-                    }
-                ],
-                "total": 1,
-                "query": "OpenAI"
-            }
-        }
-    }
+    results: List[SearchResult]
+    total: int
+    query: str
 
 
 # ==================== Root Endpoints ====================
@@ -355,42 +306,28 @@ def read_root():
     """Главная страница API"""
     return {
         "message": "Investment Intelligence Hub API",
-        "version": "1.0.0",
+        "version": "3.0.0",
         "status": "✅ Сервер работает!",
+        "docs": "/docs",
         "endpoints": {
             "startups": "/startups",
             "investors": "/investors",
             "investments": "/investments",
-            "docs": "/docs",
-            "openapi": "/openapi.json"
-        }
+            "search": "/search",
+            "statistics": "/statistics",
+            "auth": {"register": "/auth/register", "login": "/token", "profile": "/auth/me"},
+        },
     }
-
-
-@app.post("/token", tags=["Auth"])
-def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
-    # Простая заглушка - принимаем admin:secret
-    if form_data.username != "admin" or form_data.password != "secret":
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username or password",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    access_token_expires = datetime.timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_token = create_access_token(
-        data={"sub": form_data.username}, expires_delta=access_token_expires
-    )
-    return {"access_token": access_token, "token_type": "bearer"}
 
 
 @app.get("/health", tags=["Info"])
 def health_check(db: Session = Depends(get_db)):
     """Проверка здоровья сервера и БД"""
     try:
-        # Попытка выполнить простой запрос
         startup_count = db.query(Startup).count()
         investor_count = db.query(Investor).count()
         investment_count = db.query(Investment).count()
+        user_count = db.query(User).count()
 
         return {
             "status": "✅ OK",
@@ -398,433 +335,607 @@ def health_check(db: Session = Depends(get_db)):
             "statistics": {
                 "startups": startup_count,
                 "investors": investor_count,
-                "investments": investment_count
-            }
+                "investments": investment_count,
+                "users": user_count,
+            },
         }
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"Database error: {str(e)}")
 
 
+# ==================== Auth Endpoints ====================
+
+@app.post("/token", tags=["Auth"], summary="Получить JWT токен")
+def login_for_access_token(
+    form_data: OAuth2PasswordRequestForm = Depends(),
+    db: Session = Depends(get_db),
+):
+    """
+    Войти и получить JWT access token.
+
+    **Учётные данные по умолчанию:** `admin` / `Admin@12345!`
+    (переопределяются через env-переменную `ADMIN_PASSWORD`)
+    """
+    user = authenticate_user(db, form_data.username, form_data.password)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Неверное имя пользователя или пароль",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    access_token_expires = datetime.timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": user.username}, expires_delta=access_token_expires
+    )
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "expires_in": ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+    }
+
+
+@app.post("/auth/register", response_model=UserPublic, status_code=201, tags=["Auth"])
+def register_user(user_data: UserCreate, db: Session = Depends(get_db)):
+    """
+    Зарегистрировать нового пользователя.
+
+    - **username**: уникальное имя пользователя
+    - **email**: уникальный e-mail
+    - **password**: минимум 8 символов
+    """
+    if len(user_data.password) < 8:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Пароль должен содержать минимум 8 символов",
+        )
+    if get_user_by_username(db, user_data.username):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Пользователь '{user_data.username}' уже существует",
+        )
+    if get_user_by_email(db, user_data.email):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Email '{user_data.email}' уже используется",
+        )
+    user = create_user(db, user_data)
+    return UserPublic.model_validate(user)
+
+
+@app.get("/auth/me", response_model=UserPublic, tags=["Auth"])
+def get_current_user_profile(
+    current_username: str = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Получить профиль текущего пользователя (требует JWT)."""
+    user = get_user_by_username(db, current_username)
+    if not user:
+        raise HTTPException(status_code=404, detail="Пользователь не найден")
+    return UserPublic.model_validate(user)
+
+
 # ==================== Startups Endpoints ====================
 
-@app.post("/startups", response_model=StartupRead, status_code=status.HTTP_201_CREATED, tags=["Startups"])
-def create_startup(startup: StartupCreate, db: Session = Depends(get_db), current_user: str = Depends(get_current_user)):
+@app.post(
+    "/startups",
+    response_model=StartupRead,
+    status_code=status.HTTP_201_CREATED,
+    tags=["Startups"],
+)
+def create_startup(
+    startup: StartupCreate,
+    db: Session = Depends(get_db),
+    current_user: str = Depends(get_current_user),
+):
     """
-    Создать новый стартап. 
-    **Внимание**: Это защищенный метод, требуется JWT токен!
+    Создать новый стартап. **Требуется JWT токен.**
     """
     db_startup = Startup(
         name=startup.name,
         country=startup.country,
         description=startup.description,
         founded_year=startup.founded_year,
-        status=startup.status
+        status=startup.status,
+        source_url=startup.source_url,
     )
     db.add(db_startup)
     db.commit()
     db.refresh(db_startup)
-    return StartupRead.from_orm(db_startup)
+    return StartupRead.model_validate(db_startup)
+
 
 @app.get("/startups", response_model=StartupListResponse, tags=["Startups"])
 def get_startups(
-    page: int = Query(1, ge=1, description="Номер страницы (начиная с 1)"),
-    per_page: int = Query(10, ge=1, le=100, description="Количество элементов на странице"),
+    page: int = Query(1, ge=1, description="Номер страницы"),
+    per_page: int = Query(10, ge=1, le=100, description="Элементов на странице (макс. 100)"),
     country: Optional[str] = Query(None, description="Фильтр по стране"),
-    name: Optional[str] = Query(None, description="Поиск по названию (содержит)"),
-    sort_by: str = Query("name", description="Поле для сортировки (name, founded_year)"),
-    sort_order: SortOrder = Query(SortOrder.asc, description="Порядок сортировки (asc или desc)"),
-    db: Session = Depends(get_db)
+    name: Optional[str] = Query(None, description="Поиск по названию"),
+    status: Optional[str] = Query(None, description="Фильтр по статусу"),
+    founded_year_from: Optional[int] = Query(None, description="Год основания (от)"),
+    founded_year_to: Optional[int] = Query(None, description="Год основания (до)"),
+    sort_by: str = Query("name", description="Поле сортировки: name, founded_year"),
+    sort_order: SortOrder = Query(SortOrder.asc, description="asc или desc"),
+    db: Session = Depends(get_db),
 ):
     """
-    Получить список стартапов с пагинацией, фильтрацией и сортировкой
-    
-    ### Параметры:
-    - **page**: Номер страницы (по умолчанию 1)
-    - **per_page**: Количество элементов на странице (1-100, по умолчанию 10)
-    - **country**: Фильтрация по стране (опционально)
-    - **name**: Поиск по названию/части названия (опционально)
-    - **sort_by**: Поле для сортировки: 'name' или 'founded_year' (по умолчанию 'name')
-    - **sort_order**: 'asc' для возрастания или 'desc' для убывания (по умолчанию 'asc')
+    Список стартапов с пагинацией, фильтрацией и сортировкой.
     """
-    # Use joinedload to prevent N+1 queries when loading startup.investments
     query = db.query(Startup).options(joinedload(Startup.investments))
 
-    # Применяем фильтры
     if country:
-        query = query.filter(Startup.country == country)
+        query = query.filter(Startup.country.ilike(f"%{country}%"))
     if name:
         query = query.filter(Startup.name.ilike(f"%{name}%"))
+    if status:
+        query = query.filter(Startup.status.ilike(f"%{status}%"))
+    if founded_year_from:
+        query = query.filter(Startup.founded_year >= founded_year_from)
+    if founded_year_to:
+        query = query.filter(Startup.founded_year <= founded_year_to)
 
-    # Применяем сортировку
-    if sort_by == "founded_year":
-        order_column = Startup.founded_year
-    else:  # default to name
-        order_column = Startup.name
+    order_column = Startup.founded_year if sort_by == "founded_year" else Startup.name
+    query = query.order_by(
+        order_column.desc() if sort_order == SortOrder.desc else order_column.asc()
+    )
 
-    if sort_order == SortOrder.desc:
-        query = query.order_by(order_column.desc())
-    else:
-        query = query.order_by(order_column.asc())
-
-    # Получаем общее количество (subquery to avoid count issues with joinedload)
-    count_query = db.query(func.count(Startup.id))
+    # Separate count query
+    count_q = db.query(func.count(Startup.id))
     if country:
-        count_query = count_query.filter(Startup.country == country)
+        count_q = count_q.filter(Startup.country.ilike(f"%{country}%"))
     if name:
-        count_query = count_query.filter(Startup.name.ilike(f"%{name}%"))
-    total = count_query.scalar()
+        count_q = count_q.filter(Startup.name.ilike(f"%{name}%"))
+    if status:
+        count_q = count_q.filter(Startup.status.ilike(f"%{status}%"))
+    if founded_year_from:
+        count_q = count_q.filter(Startup.founded_year >= founded_year_from)
+    if founded_year_to:
+        count_q = count_q.filter(Startup.founded_year <= founded_year_to)
+    total = count_q.scalar()
 
-    # Применяем пагинацию
     skip = (page - 1) * per_page
     startups = query.offset(skip).limit(per_page).all()
-
-    # Вычисляем количество страниц
     pages = (total + per_page - 1) // per_page
 
     return StartupListResponse(
-        data=[StartupRead.from_orm(s) for s in startups],
-        meta=PaginationMeta(
-            total=total,
-            page=page,
-            per_page=per_page,
-            pages=pages
-        )
+        data=[StartupRead.model_validate(s) for s in startups],
+        meta=PaginationMeta(total=total, page=page, per_page=per_page, pages=pages),
     )
 
 
 @app.get("/startups/{startup_id}", response_model=StartupRead, tags=["Startups"])
 def get_startup(startup_id: int, db: Session = Depends(get_db)):
-    """Получить информацию о конкретном стартапе по ID"""
+    """Получить стартап по ID"""
     startup = (
         db.query(Startup)
         .options(joinedload(Startup.investments))
         .filter(Startup.id == startup_id)
         .first()
     )
-
     if not startup:
-        raise HTTPException(status_code=404, detail=f"Startup with ID {startup_id} not found")
+        raise HTTPException(status_code=404, detail=f"Startup {startup_id} not found")
+    return StartupRead.model_validate(startup)
 
-    return StartupRead.from_orm(startup)
+
+@app.put("/startups/{startup_id}", response_model=StartupRead, tags=["Startups"])
+def update_startup(
+    startup_id: int,
+    startup: StartupCreate,
+    db: Session = Depends(get_db),
+    current_user: str = Depends(get_current_user),
+):
+    """Обновить стартап по ID. **Требуется JWT токен.**"""
+    db_startup = db.query(Startup).filter(Startup.id == startup_id).first()
+    if not db_startup:
+        raise HTTPException(status_code=404, detail=f"Startup {startup_id} not found")
+    for field, value in startup.model_dump(exclude_unset=True).items():
+        setattr(db_startup, field, value)
+    db.commit()
+    db.refresh(db_startup)
+    return StartupRead.model_validate(db_startup)
+
+
+@app.delete("/startups/{startup_id}", status_code=204, tags=["Startups"])
+def delete_startup(
+    startup_id: int,
+    db: Session = Depends(get_db),
+    current_user: str = Depends(get_current_user),
+):
+    """Удалить стартап по ID. **Требуется JWT токен.**"""
+    db_startup = db.query(Startup).filter(Startup.id == startup_id).first()
+    if not db_startup:
+        raise HTTPException(status_code=404, detail=f"Startup {startup_id} not found")
+    db.delete(db_startup)
+    db.commit()
 
 
 # ==================== Investors Endpoints ====================
 
 @app.get("/investors", response_model=InvestorListResponse, tags=["Investors"])
 def get_investors(
-    page: int = Query(1, ge=1, description="Номер страницы (начиная с 1)"),
-    per_page: int = Query(10, ge=1, le=100, description="Количество элементов на странице"),
-    name: Optional[str] = Query(None, description="Поиск по названию (содержит)"),
-    sort_by: str = Query("name", description="Поле для сортировки (name)"),
-    sort_order: SortOrder = Query(SortOrder.asc, description="Порядок сортировки (asc или desc)"),
-    db: Session = Depends(get_db)
+    page: int = Query(1, ge=1),
+    per_page: int = Query(10, ge=1, le=100),
+    name: Optional[str] = Query(None, description="Поиск по имени"),
+    focus_area: Optional[str] = Query(None, description="Фильтр по области инвестирования"),
+    sort_by: str = Query("name"),
+    sort_order: SortOrder = Query(SortOrder.asc),
+    db: Session = Depends(get_db),
 ):
-    """
-    Получить список инвесторов с пагинацией, фильтрацией и сортировкой
-    
-    ### Параметры:
-    - **page**: Номер страницы (по умолчанию 1)
-    - **per_page**: Количество элементов на странице (1-100, по умолчанию 10)
-    - **name**: Поиск по названию/части названия (опционально)
-    - **sort_by**: Поле для сортировки (по умолчанию 'name')
-    - **sort_order**: 'asc' для возрастания или 'desc' для убывания (по умолчанию 'asc')
-    """
-    # Use joinedload to prevent N+1 queries
+    """Список инвесторов с пагинацией и фильтрацией."""
     query = db.query(Investor).options(joinedload(Investor.investments))
 
-    # Применяем фильтры
     if name:
         query = query.filter(Investor.name.ilike(f"%{name}%"))
+    if focus_area:
+        query = query.filter(Investor.focus_area.ilike(f"%{focus_area}%"))
 
-    # Применяем сортировку (по умолчанию по имени)
-    if sort_order == SortOrder.desc:
-        query = query.order_by(Investor.name.desc())
-    else:
-        query = query.order_by(Investor.name.asc())
+    query = query.order_by(
+        Investor.name.desc() if sort_order == SortOrder.desc else Investor.name.asc()
+    )
 
-    # Получаем общее количество
-    count_query = db.query(func.count(Investor.id))
+    count_q = db.query(func.count(Investor.id))
     if name:
-        count_query = count_query.filter(Investor.name.ilike(f"%{name}%"))
-    total = count_query.scalar()
+        count_q = count_q.filter(Investor.name.ilike(f"%{name}%"))
+    if focus_area:
+        count_q = count_q.filter(Investor.focus_area.ilike(f"%{focus_area}%"))
+    total = count_q.scalar()
 
-    # Применяем пагинацию
     skip = (page - 1) * per_page
     investors = query.offset(skip).limit(per_page).all()
-
-    # Вычисляем количество страниц
     pages = (total + per_page - 1) // per_page
 
     return InvestorListResponse(
-        data=[InvestorRead.from_orm(i) for i in investors],
-        meta=PaginationMeta(
-            total=total,
-            page=page,
-            per_page=per_page,
-            pages=pages
+        data=[InvestorRead.model_validate(i) for i in investors],
+        meta=PaginationMeta(total=total, page=page, per_page=per_page, pages=pages),
+    )
+
+
+@app.get("/investors/export/csv", tags=["Investors"])
+def export_investors_csv(db: Session = Depends(get_db)):
+    """Экспорт всех инвесторов в CSV."""
+    import csv
+    import io
+    from fastapi.responses import StreamingResponse
+
+    investors = (
+        db.query(Investor)
+        .options(joinedload(Investor.investments))
+        .order_by(Investor.name.asc())
+        .all()
+    )
+
+    output = io.StringIO()
+    writer = csv.writer(output, quoting=csv.QUOTE_ALL)
+    writer.writerow(["ID", "Name", "Fund Name", "Focus Area", "Portfolio Size"])
+    for inv in investors:
+        writer.writerow(
+            [
+                inv.id,
+                inv.name or "",
+                inv.fund_name or "",
+                inv.focus_area or "",
+                len(inv.investments) if inv.investments else 0,
+            ]
         )
+
+    output.seek(0)
+    content = "\ufeff" + output.getvalue()
+
+    return StreamingResponse(
+        iter([content.encode("utf-8")]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=investors_export.csv"},
     )
 
 
 @app.get("/investors/{investor_id}", response_model=InvestorRead, tags=["Investors"])
 def get_investor(investor_id: int, db: Session = Depends(get_db)):
-    """Получить информацию об инвесторе по ID"""
+    """Получить инвестора по ID"""
     investor = (
         db.query(Investor)
         .options(joinedload(Investor.investments))
         .filter(Investor.id == investor_id)
         .first()
     )
-
     if not investor:
-        raise HTTPException(status_code=404, detail=f"Investor with ID {investor_id} not found")
-
-    return InvestorRead.from_orm(investor)
+        raise HTTPException(status_code=404, detail=f"Investor {investor_id} not found")
+    return InvestorRead.model_validate(investor)
 
 
 # ==================== Investments Endpoints ====================
 
 @app.get("/investments", response_model=InvestmentListResponse, tags=["Investments"])
 def get_investments(
-    page: int = Query(1, ge=1, description="Номер страницы (начиная с 1)"),
-    per_page: int = Query(10, ge=1, le=100, description="Количество элементов на странице"),
-    startup_id: Optional[int] = Query(None, description="Фильтр по стартапу"),
-    investor_id: Optional[int] = Query(None, description="Фильтр по инвестору"),
-    round: Optional[str] = Query(None, description="Фильтр по раунду (Seed, Series A и т.д.)"),
-    min_amount: Optional[float] = Query(None, ge=0, description="Минимальная сумма в USD"),
-    max_amount: Optional[float] = Query(None, ge=0, description="Максимальная сумма в USD"),
-    status: Optional[str] = Query(None, description="Фильтр по статусу (Active, Concluded и т.д.)"),
-    sort_by: str = Query("date", description="Поле для сортировки (date, amount_usd)"),
-    sort_order: SortOrder = Query(SortOrder.desc, description="Порядок сортировки (asc или desc)"),
-    db: Session = Depends(get_db)
+    page: int = Query(1, ge=1),
+    per_page: int = Query(10, ge=1, le=100),
+    startup_id: Optional[int] = Query(None),
+    investor_id: Optional[int] = Query(None),
+    round: Optional[str] = Query(None, description="Seed, Series A, Series B..."),
+    min_amount: Optional[float] = Query(None, ge=0),
+    max_amount: Optional[float] = Query(None, ge=0),
+    status: Optional[str] = Query(None),
+    sort_by: str = Query("date", description="date или amount_usd"),
+    sort_order: SortOrder = Query(SortOrder.desc),
+    db: Session = Depends(get_db),
 ):
     """
-    Получить список инвестиций с расширенной фильтрацией и сортировкой
-    
-    ### Параметры:
-    - **page**: Номер страницы (по умолчанию 1)
-    - **per_page**: Количество элементов на странице (1-100, по умолчанию 10)
-    - **startup_id**: Фильтр по ID стартапа (опционально)
-    - **investor_id**: Фильтр по ID инвестора (опционально)
-    - **round**: Фильтр по типу раунда (опционально)
-    - **min_amount**: Минимальная сумма инвестиции (опционально)
-    - **max_amount**: Максимальная сумма инвестиции (опционально)
-    - **status**: Фильтр по статусу (опционально)
-    - **sort_by**: Поле для сортировки: 'date' или 'amount_usd' (по умолчанию 'date')
-    - **sort_order**: 'asc' для возрастания или 'desc' для убывания (по умолчанию 'desc')
+    Список инвестиций с расширенной фильтрацией.
     """
-    query = db.query(Investment)
+    query = db.query(Investment).options(
+        joinedload(Investment.startup), joinedload(Investment.investor)
+    )
 
-    # Применяем фильтры
     if startup_id:
         query = query.filter(Investment.startup_id == startup_id)
     if investor_id:
         query = query.filter(Investment.investor_id == investor_id)
     if round:
-        query = query.filter(Investment.round == round)
+        query = query.filter(Investment.round.ilike(f"%{round}%"))
     if status:
-        query = query.filter(Investment.status == status)
+        query = query.filter(Investment.status.ilike(f"%{status}%"))
     if min_amount is not None:
         query = query.filter(Investment.amount_usd >= min_amount)
     if max_amount is not None:
         query = query.filter(Investment.amount_usd <= max_amount)
 
-    # Применяем сортировку
-    if sort_by == "amount_usd":
-        order_column = Investment.amount_usd
-    else:  # default to date
-        order_column = Investment.date
+    order_column = Investment.amount_usd if sort_by == "amount_usd" else Investment.date
+    query = query.order_by(
+        order_column.desc() if sort_order == SortOrder.desc else order_column.asc()
+    )
 
-    if sort_order == SortOrder.desc:
-        query = query.order_by(order_column.desc())
-    else:
-        query = query.order_by(order_column.asc())
-
-    # Получаем общее количество
     total = query.count()
-
-    # Применяем пагинацию
     skip = (page - 1) * per_page
     investments = query.offset(skip).limit(per_page).all()
-
-    # Вычисляем количество страниц
     pages = (total + per_page - 1) // per_page
 
     return InvestmentListResponse(
-        data=[InvestmentRead.from_orm(i) for i in investments],
-        meta=PaginationMeta(
-            total=total,
-            page=page,
-            per_page=per_page,
-            pages=pages
-        )
+        data=[InvestmentRead.model_validate(i) for i in investments],
+        meta=PaginationMeta(total=total, page=page, per_page=per_page, pages=pages),
     )
 
 
 @app.get("/investments/{investment_id}", response_model=InvestmentRead, tags=["Investments"])
 def get_investment(investment_id: int, db: Session = Depends(get_db)):
-    """Получить информацию об инвестиции по ID"""
+    """Получить инвестицию по ID"""
     investment = db.query(Investment).filter(Investment.id == investment_id).first()
-
     if not investment:
-        raise HTTPException(status_code=404, detail=f"Investment with ID {investment_id} not found")
+        raise HTTPException(status_code=404, detail=f"Investment {investment_id} not found")
+    return InvestmentRead.model_validate(investment)
 
-    return InvestmentRead.from_orm(investment)
 
+# ==================== Full-Text Search ====================
 
-# ==================== Advanced Search Endpoint ====================
+def _fts_supported(db: Session) -> bool:
+    """Returns True if connected to PostgreSQL (supports tsvector FTS)."""
+    try:
+        db.execute(text("SELECT to_tsvector('english', 'test')"))
+        return True
+    except Exception:
+        return False
+
 
 @app.get("/search", response_model=UnifiedSearchResponse, tags=["Search"])
 def unified_search(
     q: str = Query(..., min_length=1, description="Поисковое выражение"),
     search_type: Optional[str] = Query(
-        None, description="Тип поиска: 'startup', 'investor', 'investment' или пусто для всех"
+        None, description="startup | investor | investment (пусто = все)"
     ),
-    limit: int = Query(20, ge=1, le=100, description="Максимум результатов"),
-    db: Session = Depends(get_db)
+    limit: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db),
 ):
     """
-    🔍 Полнотекстовый поиск по всем ресурсам
+    🔍 Полнотекстовый поиск по всем ресурсам.
 
-    Выполняет поиск по названиям и описаниям стартапов, инвесторов и инвестиций.
-    
-    ### Параметры:
-    - **q**: Поисковое выражение (обязательно)
-    - **search_type**: Ограничить поиск типом ресурса (опционально)
-    - **limit**: Максимум результатов (по умолчанию 20, максимум 100)
-    
-    ### Примеры использования:
-    - `/search?q=tech` - поиск по всем ресурсам
-    - `/search?q=OpenAI&search_type=startup` - поиск только стартапов
-    - `/search?q=Sequoia&search_type=investor` - поиск только инвесторов
+    На PostgreSQL используется **tsvector** для точного FTS.
+    На SQLite используется LIKE (для тестов).
     """
-    results = []
+    results: List[SearchResult] = []
+    use_fts = _fts_supported(db)
     search_query = f"%{q}%"
 
-    # Поиск в стартапах
+    # ── Startups ──────────────────────────────────────────────────────
     if search_type is None or search_type == "startup":
-        startups = db.query(Startup).filter(
-            or_(
-                Startup.name.ilike(search_query),
-                Startup.country.ilike(search_query)
-            )
-        ).limit(limit).all()
+        if use_fts:
+            startups = db.execute(
+                text(
+                    """
+                    SELECT id, name, country, description, founded_year, status, source_url
+                    FROM startups
+                    WHERE to_tsvector('english', coalesce(name,'') || ' ' || coalesce(description,'') || ' ' || coalesce(country,''))
+                          @@ plainto_tsquery('english', :q)
+                    LIMIT :lim
+                    """
+                ),
+                {"q": q, "lim": limit},
+            ).fetchall()
+            for row in startups:
+                results.append(
+                    SearchResult(
+                        id=row.id,
+                        type="startup",
+                        name=row.name,
+                        details={
+                            "country": row.country,
+                            "founded_year": row.founded_year,
+                            "description": row.description or "N/A",
+                            "source_url": row.source_url,
+                        },
+                    )
+                )
+        else:
+            for s in (
+                db.query(Startup)
+                .filter(
+                    or_(
+                        Startup.name.ilike(search_query),
+                        Startup.country.ilike(search_query),
+                        Startup.description.ilike(search_query),
+                    )
+                )
+                .limit(limit)
+                .all()
+            ):
+                results.append(
+                    SearchResult(
+                        id=s.id,
+                        type="startup",
+                        name=s.name,
+                        details={
+                            "country": s.country,
+                            "founded_year": s.founded_year,
+                            "description": s.description or "N/A",
+                        },
+                    )
+                )
 
-        for startup in startups:
-            results.append(SearchResult(
-                id=startup.id,
-                type="startup",
-                name=startup.name,
-                details={
-                    "country": startup.country,
-                    "founded_year": startup.founded_year,
-                    "description": startup.description or "N/A"
-                }
-            ))
-
-    # Поиск в инвесторах
+    # ── Investors ─────────────────────────────────────────────────────
     if search_type is None or search_type == "investor":
-        investors = db.query(Investor).filter(
-            Investor.name.ilike(search_query)
-        ).limit(limit).all()
+        if use_fts:
+            investors = db.execute(
+                text(
+                    """
+                    SELECT id, name, fund_name, focus_area
+                    FROM investors
+                    WHERE to_tsvector('english', coalesce(name,'') || ' ' || coalesce(focus_area,''))
+                          @@ plainto_tsquery('english', :q)
+                    LIMIT :lim
+                    """
+                ),
+                {"q": q, "lim": limit},
+            ).fetchall()
+            for row in investors:
+                results.append(
+                    SearchResult(
+                        id=row.id,
+                        type="investor",
+                        name=row.name,
+                        details={"fund_name": row.fund_name or "N/A", "focus_area": row.focus_area or "N/A"},
+                    )
+                )
+        else:
+            for inv in (
+                db.query(Investor)
+                .filter(
+                    or_(
+                        Investor.name.ilike(search_query),
+                        Investor.focus_area.ilike(search_query),
+                    )
+                )
+                .limit(limit)
+                .all()
+            ):
+                results.append(
+                    SearchResult(
+                        id=inv.id,
+                        type="investor",
+                        name=inv.name,
+                        details={"fund_name": inv.fund_name or "N/A", "focus_area": inv.focus_area or "N/A"},
+                    )
+                )
 
-        for investor in investors:
-            results.append(SearchResult(
-                id=investor.id,
-                type="investor",
-                name=investor.name,
-                details={
-                    "fund_name": investor.fund_name or "N/A",
-                    "focus_area": investor.focus_area or "N/A"
-                }
-            ))
-
-    # Поиск в инвестициях (по раунду)
+    # ── Investments ───────────────────────────────────────────────────
     if search_type is None or search_type == "investment":
-        investments = db.query(Investment).filter(
-            or_(
-                Investment.round.ilike(search_query),
-                Investment.status.ilike(search_query)
+        matches = (
+            db.query(Investment)
+            .filter(
+                or_(
+                    Investment.round.ilike(search_query),
+                    Investment.status.ilike(search_query),
+                )
             )
-        ).limit(limit).all()
+            .limit(limit)
+            .all()
+        )
+        for inv in matches:
+            startup = db.query(Startup).filter(Startup.id == inv.startup_id).first()
+            investor = db.query(Investor).filter(Investor.id == inv.investor_id).first()
+            results.append(
+                SearchResult(
+                    id=inv.id,
+                    type="investment",
+                    name=f"{startup.name if startup else 'Unknown'} — {investor.name if investor else 'Unknown'}",
+                    details={
+                        "round": inv.round,
+                        "amount_usd": float(inv.amount_usd) if inv.amount_usd else None,
+                        "status": inv.status,
+                        "date": inv.date.isoformat() if inv.date else None,
+                    },
+                )
+            )
 
-        for investment in investments:
-            startup = db.query(Startup).filter(Startup.id == investment.startup_id).first()
-            investor = db.query(Investor).filter(Investor.id == investment.investor_id).first()
-
-            results.append(SearchResult(
-                id=investment.id,
-                type="investment",
-                name=f"{startup.name if startup else 'Unknown'} - {investor.name if investor else 'Unknown'}",
-                details={
-                    "round": investment.round,
-                    "amount_usd": float(investment.amount_usd),
-                    "status": investment.status,
-                    "date": investment.date.isoformat() if investment.date else None
-                }
-            ))
-
-    return UnifiedSearchResponse(
-        results=results[:limit],
-        total=len(results),
-        query=q
-    )
+    return UnifiedSearchResponse(results=results[:limit], total=len(results[:limit]), query=q)
 
 
-# ==================== Statistics Endpoints ====================
+# ==================== Statistics Endpoint ====================
 
 @app.get("/statistics", tags=["Statistics"])
 def get_statistics(db: Session = Depends(get_db)):
-    """Получить общую статистику по БД (кэшируется на 60 секунд)"""
+    """Общая статистика по БД (кэшируется на 60 секунд в памяти)."""
     global _stats_cache
     now = time.time()
 
-    # Return cached result if still fresh
     if _stats_cache["data"] is not None and now < _stats_cache["expires_at"]:
-        return _stats_cache["data"]
+        cached = dict(_stats_cache["data"])
+        cached["cache"] = {"cached": True, "expires_in_seconds": int(_stats_cache["expires_at"] - now)}
+        return cached
 
-    # Общие подсчеты
     startup_count = db.query(func.count(Startup.id)).scalar()
     investor_count = db.query(func.count(Investor.id)).scalar()
     investment_count = db.query(func.count(Investment.id)).scalar()
 
-    # Статистика по инвестициям
     total_investment = db.query(func.sum(Investment.amount_usd)).scalar() or 0
     avg_investment = db.query(func.avg(Investment.amount_usd)).scalar() or 0
 
-    # Топ стартапы по сумме инвестиций
-    top_startups = db.query(
-        Startup.name,
-        func.sum(Investment.amount_usd).label("total_investment")
-    ).join(Investment).group_by(Startup.id).order_by(
-        func.sum(Investment.amount_usd).desc()
-    ).limit(5).all()
+    top_startups = (
+        db.query(Startup.name, func.sum(Investment.amount_usd).label("total"))
+        .join(Investment)
+        .group_by(Startup.id)
+        .order_by(func.sum(Investment.amount_usd).desc())
+        .limit(5)
+        .all()
+    )
+
+    # Round distribution
+    rounds = (
+        db.query(Investment.round, func.count(Investment.id).label("cnt"))
+        .group_by(Investment.round)
+        .order_by(func.count(Investment.id).desc())
+        .all()
+    )
+
+    # Country distribution
+    countries = (
+        db.query(Startup.country, func.count(Startup.id).label("cnt"))
+        .filter(Startup.country.isnot(None))
+        .group_by(Startup.country)
+        .order_by(func.count(Startup.id).desc())
+        .limit(10)
+        .all()
+    )
 
     result = {
         "summary": {
             "total_startups": startup_count,
             "total_investors": investor_count,
-            "total_investments": investment_count
+            "total_investments": investment_count,
         },
         "investment_stats": {
             "total_amount_usd": float(total_investment),
-            "average_amount_usd": float(avg_investment) if avg_investment else None
+            "average_amount_usd": float(avg_investment) if avg_investment else None,
         },
         "top_startups": [
-            {"name": name, "total_investment_usd": float(amount)}
-            for name, amount in top_startups
+            {"name": name, "total_investment_usd": float(amount)} for name, amount in top_startups
         ],
-        "cache": {
-            "cached": False,
-            "expires_in_seconds": _STATS_TTL_SECONDS
-        }
+        "rounds_distribution": [
+            {"round": r, "count": c} for r, c in rounds
+        ],
+        "countries_distribution": [
+            {"country": c, "startups": cnt} for c, cnt in countries
+        ],
+        "cache": {"cached": False, "expires_in_seconds": _STATS_TTL_SECONDS},
     }
 
-    # Store in cache
     _stats_cache["data"] = result
     _stats_cache["expires_at"] = now + _STATS_TTL_SECONDS
-
-    # Mark as fresh (not from cache) for the first caller
     return result
 
 

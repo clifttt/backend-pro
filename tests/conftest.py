@@ -9,7 +9,8 @@ from sqlalchemy.orm import sessionmaker
 
 from app.main import app
 from app.db import get_db
-from app.models import Base, Startup, Investor, Investment
+from app.models import Base, Startup, Investor, Investment, User
+from app.auth import get_password_hash
 
 # ── SQLite in-memory test database ──────────────────────────────────────────
 SQLALCHEMY_TEST_URL = "sqlite:///./test_temp.db"
@@ -66,8 +67,9 @@ def client(setup_database):
 def seeded_client(setup_database):
     """
     TestClient with pre-seeded data:
-      - 1 Startup (id=1, name='TestStartup', country='USA')
-      - 1 Investor (id=1, name='TestInvestor')
+      - 1 admin User (username='admin', password='Admin@12345!')
+      - 1 Startup (name='TestStartup', country='USA')
+      - 1 Investor (name='TestInvestor')
       - 1 Investment linking them (Seed, $500k)
     """
     app.dependency_overrides[get_db] = override_get_db
@@ -75,6 +77,17 @@ def seeded_client(setup_database):
     # Seed once
     db = TestingSessionLocal()
     try:
+        if db.query(User).count() == 0:
+            admin = User(
+                username="admin",
+                email="admin@test.local",
+                hashed_password=get_password_hash("Admin@12345!"),
+                is_active=True,
+                is_admin=True,
+            )
+            db.add(admin)
+            db.commit()
+
         if db.query(Startup).count() == 0:
             startup = Startup(
                 name="TestStartup",
@@ -82,6 +95,7 @@ def seeded_client(setup_database):
                 description="A test startup",
                 founded_year=2020,
                 status="Active",
+                source_url="https://www.crunchbase.com/organization/teststartup",
             )
             investor = Investor(
                 name="TestInvestor",
@@ -114,9 +128,9 @@ def auth_headers(seeded_client):
     """Return Authorization headers obtained from /token."""
     resp = seeded_client.post(
         "/token",
-        data={"username": "admin", "password": "secret"},
+        data={"username": "admin", "password": "Admin@12345!"},
         headers={"Content-Type": "application/x-www-form-urlencoded"},
     )
-    assert resp.status_code == 200
+    assert resp.status_code == 200, f"Login failed: {resp.text}"
     token = resp.json()["access_token"]
     return {"Authorization": f"Bearer {token}"}

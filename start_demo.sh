@@ -33,7 +33,7 @@ BACKEND_PID=$!
 # 7. Запускаем Фронтенд
 echo "🎨 Запуск Фронтенда на http://localhost:3000..."
 cd frontend
-python3 -m http.server 3000 &
+python3 server.py 3000 &
 FRONTEND_PID=$!
 
 echo ""

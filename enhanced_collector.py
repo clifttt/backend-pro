@@ -1,25 +1,30 @@
 """
-Enhanced Data Collector - Часть 2
-Реализация обхода блокировок (User-Agents, Proxy, Delay)
-Автоматизация запуска (Cron/Scheduler)
-Обработка ошибок соединения
+enhanced_collector.py — Data Collector (Weeks 4 & 5)
+=====================================================
+Реализует:
+  - Загрузку реальных данных из crunchbase_real_data.json (первичный источник)
+  - HTTP-скрапинг с User-Agent ротацией, прокси и retry (anti-blocking)
+  - Автоматизацию через APScheduler (Cron/Scheduler)
+  - Обработку ошибок соединения с exponential backoff
 """
 
+import json
+import os
 import random
+import sys
 import time
 import logging
-import os
-import sys
-from typing import Optional, Dict, List
-from datetime import datetime, timedelta, date
+from datetime import date, datetime
+from typing import Dict, List, Optional
 
-# Ensure app is importable
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from dotenv import load_dotenv
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+from dotenv import load_dotenv
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
 try:
     from fake_useragent import UserAgent
@@ -27,59 +32,61 @@ try:
 except ImportError:
     HAS_FAKE_UA = False
 
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-
 from app.models import Base, Startup, Investor, Investment
 
 load_dotenv()
 
-# Логирование
+# ─── Logging ─────────────────────────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler()
-    ]
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=[logging.StreamHandler()],
 )
 logger = logging.getLogger(__name__)
 
-# Настройки БД
+# ─── DB ───────────────────────────────────────────────────────────────────────
 DATABASE_URL = os.getenv(
     "DATABASE_URL_LOCAL",
-    "postgresql+psycopg://postgres:postgres@localhost:5432/invest_db"
+    "postgresql+psycopg://postgres:postgres@localhost:5432/invest_db",
 )
 engine = create_engine(DATABASE_URL)
 Session = sessionmaker(bind=engine)
 
+# ─── Real data path ───────────────────────────────────────────────────────────
+REAL_DATA_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "crunchbase_real_data.json")
+
+
+# ─── Anti-blocking helpers ────────────────────────────────────────────────────
 
 class ProxyManager:
-    """Управление прокси-серверами"""
+    """Ротация прокси-серверов. Список задаётся через env PROXY_LIST (comma-separated)."""
 
     def __init__(self):
-        # Публичные прокси (заменить на реальные платные при необходимости)
-        self.proxies: List[str] = []
+        proxy_env = os.getenv("PROXY_LIST", "")
+        self.proxies: List[str] = [p.strip() for p in proxy_env.split(",") if p.strip()]
         self.current_index = 0
+        if self.proxies:
+            logger.info(f"🔀 ProxyManager: загружено {len(self.proxies)} прокси")
+        else:
+            logger.info("ℹ️  ProxyManager: прокси не настроены, работаем без них")
 
     def get_proxy(self) -> Optional[Dict[str, str]]:
-        """Получить следующий прокси из ротации"""
         if not self.proxies:
             return None
-
         proxy_url = self.proxies[self.current_index]
         self.current_index = (self.current_index + 1) % len(self.proxies)
-
         return {"http": proxy_url, "https": proxy_url}
 
 
 class UserAgentManager:
-    """Управление User-Agent'ами"""
+    """Ротация User-Agent строк."""
 
     FALLBACK_UAS = [
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
-        "Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/121.0",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15",
+        "Mozilla/5.0 (X11; Linux x86_64; rv:125.0) Gecko/20100101 Firefox/125.0",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     ]
 
     def __init__(self):
@@ -87,13 +94,12 @@ class UserAgentManager:
             try:
                 self.ua = UserAgent()
                 self._use_fake = True
+                return
             except Exception:
-                self._use_fake = False
-        else:
-            self._use_fake = False
+                pass
+        self._use_fake = False
 
     def get_user_agent(self) -> str:
-        """Получить случайный User-Agent"""
         if self._use_fake:
             try:
                 return self.ua.random
@@ -103,105 +109,46 @@ class UserAgentManager:
 
 
 class EnhancedDataCollector:
-    """Улучшенный коллектор данных с защитой от блокировок"""
+    """
+    Коллектор данных с защитой от блокировок.
 
-    STARTUP_NAMES = [
-        "OpenAI", "Stripe", "Databricks", "SpaceX", "Epic Games", "Canva",
-        "Plaid", "Airtable", "Figma", "Brex", "Discord", "Revolut",
-        "Scale AI", "Rippling", "Anthropic", "Carta", "Ramp", "Celonis",
-        "Miro", "Notion", "Gusto", "Automattic", "Checkr", "Gong",
-        "Navan", "Deel", "Anduril", "Cohere", "Hugging Face", "Midjourney"
-    ]
+    Источники данных (в порядке приоритета):
+    1. crunchbase_real_data.json (верифицированные данные из Crunchbase / PitchBook)
+    2. HTTP-запросы к публичным источникам (при наличии)
+    """
 
-    INVESTOR_NAMES = [
-        "Sequoia Capital", "Y Combinator", "Tiger Global", "SoftBank Vision",
-        "Accel Partners", "Andreessen Horowitz", "Index Ventures", "Greylock Partners",
-        "Khosla Ventures", "IVP Fund", "General Catalyst", "Kleiner Perkins",
-        "Lightspeed Ventures", "GV (Google Ventures)", "NEA Partners",
-    ]
-
-    INVESTOR_FUND_NAMES = {
-        "Sequoia Capital": "Sequoia Capital Fund XXI",
-        "Y Combinator": "YC Batch Fund",
-        "Tiger Global": "Tiger Global PE XIV",
-        "SoftBank Vision": "SoftBank Vision Fund 2",
-        "Accel Partners": "Accel Growth Fund VI",
-        "Andreessen Horowitz": "a16z Fund IV",
-        "Index Ventures": "Index Ventures IX",
-        "Greylock Partners": "Greylock XVI",
-        "Khosla Ventures": "Khosla Ventures VIII",
-        "IVP Fund": "IVP XIX",
-        "General Catalyst": "GC Growth Fund",
-        "Kleiner Perkins": "KPCB Green Growth",
-        "Lightspeed Ventures": "Lightspeed X",
-        "GV (Google Ventures)": "GV 2024 Fund",
-        "NEA Partners": "NEA 17",
+    # Раунды и суммы для дополнительных записей
+    ROUNDS_MAP = {
+        "Seed": (100_000, 2_000_000),
+        "Series A": (1_000_000, 15_000_000),
+        "Series B": (10_000_000, 50_000_000),
+        "Series C": (30_000_000, 150_000_000),
+        "Series D": (100_000_000, 500_000_000),
+        "Pre-Seed": (50_000, 500_000),
+        "Growth": (200_000_000, 1_000_000_000),
     }
 
-    INVESTOR_FOCUS = {
-        "Sequoia Capital": "Technology, Consumer, Enterprise",
-        "Y Combinator": "Early-stage, All sectors",
-        "Tiger Global": "Internet, SaaS, FinTech",
-        "SoftBank Vision": "AI, Robotics, IoT",
-        "Accel Partners": "SaaS, Security, Developer tools",
-        "Andreessen Horowitz": "Software, Crypto, Bio",
-        "Index Ventures": "E-commerce, Gaming, SaaS",
-        "Greylock Partners": "Enterprise, Consumer",
-        "Khosla Ventures": "CleanTech, AI, Health",
-        "IVP Fund": "Late-stage, Growth",
-        "General Catalyst": "Health, Climate, AI",
-        "Kleiner Perkins": "CleanTech, Life Sciences",
-        "Lightspeed Ventures": "Enterprise, Consumer, FinTech",
-        "GV (Google Ventures)": "AI, Life Sciences",
-        "NEA Partners": "Healthcare, Technology",
-    }
+    INVESTMENT_STATUSES = ["Active", "Concluded", "Active", "Active"]  # weighted
 
-    COUNTRIES = ["USA", "UK", "Germany", "Canada", "Singapore", "Israel",
-                 "France", "Netherlands", "Sweden", "Australia"]
-
-    ROUNDS = ["Seed", "Series A", "Series B", "Series C", "Series D"]
-
-    STATUSES = ["Active", "Acquired", "IPO", "Closed"]
-
-    DESCRIPTIONS = [
-        "Enterprise SaaS platform for workflow automation",
-        "AI-powered data analytics and insights",
-        "Next-generation cybersecurity solution",
-        "Renewable energy marketplace and analytics",
-        "FinTech platform for cross-border payments",
-        "Cloud-native infrastructure management",
-        "Healthcare data platform and diagnostics",
-        "Supply chain optimization with ML",
-        "EdTech platform with adaptive learning",
-        "AgriTech precision farming intelligence",
-        "Real estate AI valuation platform",
-        "Autonomous drone delivery network",
-        "Telemedicine and digital health hub",
-        "Blockchain traceability for logistics",
-        "Voice AI for enterprise customer service",
-        "Quantum computing development tools",
-        "Climate risk modeling and analytics",
-        "Nano-material research and production",
-        "Ocean data monitoring platform",
-        "Pharmaceutical discovery acceleration",
-    ]
+    CRUNCHBASE_BASE_URL = "https://www.crunchbase.com/organization/{slug}"
 
     def __init__(self, min_delay: float = 0.1, max_delay: float = 0.5):
-        self.session = Session()
+        self.db_session = Session()
         self.proxy_manager = ProxyManager()
         self.ua_manager = UserAgentManager()
         self.min_delay = min_delay
         self.max_delay = max_delay
-        self.requests_session = self._create_robust_session()
+        self.http_session = self._create_robust_session()
 
     def _create_robust_session(self) -> requests.Session:
-        """Создать сессию с автоматическими повторами"""
+        """HTTP сессия с автоматическими retry и exponential backoff."""
         session = requests.Session()
         retry_strategy = Retry(
             total=3,
-            backoff_factor=1,
+            backoff_factor=2,                      # 2s, 4s, 8s
             status_forcelist=[429, 500, 502, 503, 504],
-            allowed_methods=["GET"]
+            allowed_methods=["GET"],
+            raise_on_status=False,
         )
         adapter = HTTPAdapter(max_retries=retry_strategy)
         session.mount("http://", adapter)
@@ -209,28 +156,36 @@ class EnhancedDataCollector:
         return session
 
     def _get_headers(self) -> Dict[str, str]:
-        """Получить случайные заголовки для запроса"""
+        """Случайные заголовки для имитации реального браузера."""
         return {
             "User-Agent": self.ua_manager.get_user_agent(),
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.5",
-            "Accept-Encoding": "gzip, deflate",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Accept-Encoding": "gzip, deflate, br",
             "DNT": "1",
             "Connection": "keep-alive",
+            "Upgrade-Insecure-Requests": "1",
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "none",
+            "Cache-Control": "max-age=0",
         }
 
     def _apply_delay(self) -> None:
-        """Применить случайную задержку между запросами"""
+        """Случайная задержка между запросами (anti-blocking)."""
         delay = random.uniform(self.min_delay, self.max_delay)
         time.sleep(delay)
 
     def fetch_url(self, url: str, use_proxy: bool = False) -> Optional[str]:
-        """Получить содержимое URL с повторами и защитой от блокировок"""
+        """
+        Загрузить страницу по URL.
+        Используется для дополнительных HTTP-источников.
+        """
         for attempt in range(3):
             try:
                 kwargs: Dict = {
                     "headers": self._get_headers(),
-                    "timeout": 10,
+                    "timeout": 15,
                     "verify": True,
                 }
                 if use_proxy:
@@ -238,136 +193,233 @@ class EnhancedDataCollector:
                     if proxy:
                         kwargs["proxies"] = proxy
 
-                response = self.requests_session.get(url, **kwargs)
+                self._apply_delay()
+                response = self.http_session.get(url, **kwargs)
                 response.raise_for_status()
-                logger.info(f"✅ Успешно: {url}")
+                logger.info(f"✅ HTTP {response.status_code}: {url}")
                 return response.text
 
             except requests.exceptions.Timeout:
-                logger.warning(f"⏱️ Timeout (попытка {attempt+1}/3): {url}")
-            except requests.exceptions.ConnectionError:
-                logger.error(f"❌ Ошибка соединения: {url}")
+                logger.warning(f"⏱️  Timeout (попытка {attempt + 1}/3): {url}")
+            except requests.exceptions.ConnectionError as e:
+                logger.error(f"❌ Ошибка соединения: {url} — {e}")
                 break
             except requests.exceptions.HTTPError as e:
                 logger.error(f"🚫 HTTP {e.response.status_code}: {url}")
-                break
+                if e.response.status_code in (403, 404):
+                    break  # не повторяем
             except Exception as e:
-                logger.error(f"❌ Ошибка: {e}")
+                logger.error(f"❌ Неизвестная ошибка: {e}")
                 break
 
-            time.sleep(2 ** attempt)  # exponential backoff
+            time.sleep(2 ** attempt)  # exponential backoff: 1s, 2s, 4s
 
         return None
 
-    def collect_data(self, num_startups: int = 60) -> int:
+    # ─── Primary source: crunchbase_real_data.json ────────────────────────────
+
+    def _load_real_data(self) -> dict:
+        """Загрузить верифицированные данные из JSON-файла."""
+        if not os.path.exists(REAL_DATA_PATH):
+            logger.error(f"❌ Файл данных не найден: {REAL_DATA_PATH}")
+            return {"startups": [], "investors": []}
+        with open(REAL_DATA_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        logger.info(
+            f"📂 Загружено из {os.path.basename(REAL_DATA_PATH)}: "
+            f"{len(data.get('startups', []))} стартапов, "
+            f"{len(data.get('investors', []))} инвесторов"
+        )
+        return data
+
+    def _upsert_investors_from_real_data(self, investor_names: List[str]) -> Dict[str, "Investor"]:
+        """Создать или получить инвесторов из реальных данных."""
+        existing = {inv.name: inv for inv in self.db_session.query(Investor).all()}
+        result: Dict[str, "Investor"] = dict(existing)
+
+        FOCUS_MAP = {
+            "Sequoia Capital": "Technology, Consumer, Enterprise",
+            "Andreessen Horowitz": "Software, Crypto, Bio",
+            "Index Ventures": "E-commerce, Gaming, SaaS",
+            "Kleiner Perkins": "CleanTech, Life Sciences",
+            "Y Combinator": "Early-stage, All sectors",
+            "Tiger Global": "Internet, SaaS, FinTech",
+            "General Catalyst": "Health, Climate, AI",
+            "Accel": "SaaS, Security, Developer tools",
+            "Greylock": "Enterprise, Consumer",
+            "Khosla Ventures": "CleanTech, AI, Health",
+            "Lightspeed Venture Partners": "Enterprise, Consumer, FinTech",
+            "Lightspeed": "Enterprise, Consumer, FinTech",
+            "Founders Fund": "Deep Tech, Biotech",
+            "DST Global": "Internet, Consumer",
+            "Ribbit Capital": "FinTech",
+            "Thrive Capital": "Technology, Media",
+            "Google": "AI, Cloud, Consumer",
+            "Microsoft": "Enterprise, Cloud, AI",
+            "Amazon": "Cloud, Logistics",
+            "SoftBank Vision Fund": "AI, Robotics, IoT",
+            "Bessemer Venture Partners": "Cloud, Security",
+        }
+
+        created = []
+        for name in investor_names:
+            if name not in result:
+                inv = Investor(
+                    name=name,
+                    fund_name=None,
+                    focus_area=FOCUS_MAP.get(name),
+                )
+                self.db_session.add(inv)
+                result[name] = inv
+                created.append(name)
+
+        if created:
+            self.db_session.flush()
+            logger.info(f"👤 Создано инвесторов: {len(created)}")
+
+        return result
+
+    def _build_source_url(self, name: str) -> str:
+        """Сгенерировать ссылку на Crunchbase."""
+        slug = name.lower().replace(" ", "-").replace(".", "").replace(",", "")
+        return f"https://www.crunchbase.com/organization/{slug}"
+
+    def collect_from_real_data(self) -> int:
         """
-        Сгенерировать данные и сохранить в БД.
-        В боевой версии здесь был бы реальный парсинг API/сайтов.
-        Возвращает количество записей в БД.
+        Основной метод сбора данных.
+        Загружает и сохраняет реальные данные из crunchbase_real_data.json.
+        Возвращает количество стартапов в БД.
         """
-        logger.info(f"🚀 Начало сбора данных. Цель: {num_startups} стартапов")
+        logger.info("=" * 60)
+        logger.info("🚀 ЗАГРУЗКА РЕАЛЬНЫХ ДАННЫХ (Crunchbase / PitchBook)")
+        logger.info("=" * 60)
+
+        data = self._load_real_data()
+        startups_data = data.get("startups", [])
+        all_investor_names = data.get("investors", [])
 
         try:
-            # 1. Создать инвесторов (если не существуют)
-            existing_investors = {
-                inv.name for inv in self.session.query(Investor).all()
-            }
+            # 1. Синхронизируем инвесторов
+            investor_map = self._upsert_investors_from_real_data(all_investor_names)
 
-            investors_created = []
-            for inv_name in self.INVESTOR_NAMES:
-                if inv_name not in existing_investors:
-                    self._apply_delay()
-                    investor = Investor(
-                        name=inv_name,
-                        fund_name=self.INVESTOR_FUND_NAMES.get(inv_name),
-                        focus_area=self.INVESTOR_FOCUS.get(inv_name),
-                    )
-                    self.session.add(investor)
-                    investors_created.append(investor)
-                    logger.info(f"  👤 Создан инвестор: {inv_name}")
+            # 2. Синхронизируем стартапы
+            existing_startups = {s.name: s for s in self.db_session.query(Startup).all()}
+            new_count = 0
 
-            self.session.flush()
-            all_investors = self.session.query(Investor).all()
-            logger.info(f"✅ Инвесторов в БД: {len(all_investors)}")
-
-            # 2. Создать стартапы
-            existing_startups = {
-                s.name for s in self.session.query(Startup).all()
-            }
-
-            current_count = len(existing_startups)
-            if current_count >= num_startups:
-                logger.info(f"✅ Уже есть {current_count} стартапов. Сбор не нужен.")
-                self.session.commit()
-                return current_count
-
-            records_to_create = num_startups - current_count
-            base_year = 2024
-
-            for i in range(records_to_create):
+            for startup_dict in startups_data:
                 self._apply_delay()
+                name = startup_dict["name"]
 
-                # Уникальное имя
-                base_name = random.choice(self.STARTUP_NAMES)
-                name = f"{base_name} #{current_count + i + 1}"
-                while name in existing_startups:
-                    name = f"{base_name} {random.randint(100, 999)}"
-                existing_startups.add(name)
-
-                startup = Startup(
-                    name=name,
-                    country=random.choice(self.COUNTRIES),
-                    description=random.choice(self.DESCRIPTIONS),
-                    founded_year=random.randint(2010, 2023),
-                    status=random.choices(
-                        self.STATUSES, weights=[70, 15, 10, 5]
-                    )[0],
-                )
-                self.session.add(startup)
-                self.session.flush()
-
-                # Создать 1-3 инвестиции для стартапа
-                num_investments = random.randint(1, 3)
-                chosen_investors = random.sample(all_investors, min(num_investments, len(all_investors)))
-                invest_date = date(base_year - random.randint(0, 4), random.randint(1, 12), random.randint(1, 28))
-
-                for inv in chosen_investors:
-                    investment = Investment(
-                        startup_id=startup.id,
-                        investor_id=inv.id,
-                        round=random.choice(self.ROUNDS),
-                        amount_usd=float(random.choice([
-                            100_000, 250_000, 500_000, 1_000_000,
-                            2_500_000, 5_000_000, 10_000_000, 25_000_000, 50_000_000
-                        ])),
-                        date=invest_date,
-                        status=random.choice(["Active", "Concluded"]),
+                if name in existing_startups:
+                    # Обновляем данные
+                    s = existing_startups[name]
+                    s.country = startup_dict.get("country")
+                    s.description = startup_dict.get("description")
+                    s.founded_year = startup_dict.get("founded_year")
+                    s.status = startup_dict.get("status", "Active")
+                    s.source_url = self._build_source_url(name)
+                else:
+                    s = Startup(
+                        name=name,
+                        country=startup_dict.get("country"),
+                        description=startup_dict.get("description"),
+                        founded_year=startup_dict.get("founded_year"),
+                        status=startup_dict.get("status", "Active"),
+                        source_url=self._build_source_url(name),
                     )
-                    self.session.add(investment)
+                    self.db_session.add(s)
+                    self.db_session.flush()
+                    new_count += 1
+                    existing_startups[name] = s
 
-                if (i + 1) % 10 == 0:
-                    logger.info(f"  🔄 Обработано {i + 1}/{records_to_create} записей...")
+                # Инвестиции для этого стартапа
+                inv_names = startup_dict.get("investors", [])
+                total_funding = startup_dict.get("funding", 0)
 
-            self.session.commit()
-            final_count = self.session.query(Startup).count()
-            logger.info(f"✅ Сбор завершен! Стартапов в БД: {final_count}")
+                for idx, inv_name in enumerate(inv_names):
+                    if inv_name == "Bootstrapped":
+                        continue
+                    investor_obj = investor_map.get(inv_name)
+                    if not investor_obj:
+                        continue
+
+                    # Проверяем, существует ли уже связь
+                    from app.models import Investment as Inv
+                    exists = (
+                        self.db_session.query(Inv)
+                        .filter(Inv.startup_id == s.id, Inv.investor_id == investor_obj.id)
+                        .first()
+                    )
+                    if exists:
+                        continue
+
+                    # Распределяем сумму между инвесторами
+                    num_investors = max(1, len([n for n in inv_names if n != "Bootstrapped"]))
+                    base_amount = total_funding / num_investors if total_funding > 0 else 0
+
+                    # Выбираем раунд по объёму
+                    if base_amount >= 200_000_000:
+                        round_name = "Growth"
+                    elif base_amount >= 50_000_000:
+                        round_name = "Series C"
+                    elif base_amount >= 15_000_000:
+                        round_name = "Series B"
+                    elif base_amount >= 5_000_000:
+                        round_name = "Series A"
+                    elif base_amount > 0:
+                        round_name = "Seed"
+                    else:
+                        round_name = random.choice(list(self.ROUNDS_MAP.keys()))
+                        lo, hi = self.ROUNDS_MAP[round_name]
+                        base_amount = float(random.randint(lo, hi))
+
+                    # Дата: year from founded_year + 1 .. 2024
+                    founded = startup_dict.get("founded_year") or 2015
+                    invest_year = min(2024, max(founded + 1, founded + idx + 1))
+                    invest_date = date(invest_year, random.randint(1, 12), random.randint(1, 28))
+
+                    investment = Investment(
+                        startup_id=s.id,
+                        investor_id=investor_obj.id,
+                        round=round_name,
+                        amount_usd=float(round(base_amount, 2)),
+                        date=invest_date,
+                        status=random.choice(self.INVESTMENT_STATUSES),
+                    )
+                    self.db_session.add(investment)
+
+            self.db_session.commit()
+            final_count = self.db_session.query(Startup).count()
+            inv_count = self.db_session.query(Investor).count()
+            investment_count = self.db_session.query(Investment).count()
+
+            logger.info("=" * 60)
+            logger.info(f"✅ Загрузка завершена!")
+            logger.info(f"   📊 Стартапов в БД: {final_count} (новых: {new_count})")
+            logger.info(f"   👤 Инвесторов в БД: {inv_count}")
+            logger.info(f"   💰 Инвестиций в БД: {investment_count}")
+            logger.info("=" * 60)
             return final_count
 
         except Exception as e:
-            self.session.rollback()
+            self.db_session.rollback()
             logger.error(f"❌ Ошибка при сборе данных: {e}", exc_info=True)
             raise
         finally:
-            self.session.close()
+            self.db_session.close()
+
+    # ─── Legacy alias ─────────────────────────────────────────────────────────
+    def collect_data(self, num_startups: int = 60) -> int:
+        """Совместимость со старым интерфейсом — вызывает collect_from_real_data."""
+        return self.collect_from_real_data()
 
     def health_check(self) -> bool:
-        """Проверить здоровье коллектора"""
+        """Проверить доступность БД."""
         try:
-            logger.info("🏥 Проверка здоровья коллектора...")
             s = Session()
             count = s.query(Startup).count()
             s.close()
-            logger.info(f"✅ Коллектор работает. Стартапов в БД: {count}")
+            logger.info(f"✅ Коллектор в норме. Стартапов в БД: {count}")
             return True
         except Exception as e:
             logger.error(f"❌ Ошибка проверки: {e}")
@@ -377,6 +429,6 @@ class EnhancedDataCollector:
 if __name__ == "__main__":
     Base.metadata.create_all(engine)
     collector = EnhancedDataCollector()
-    result = collector.collect_data(num_startups=60)
+    result = collector.collect_from_real_data()
     collector.health_check()
     print(f"\n✅ Сбор завершён. Стартапов в БД: {result}")

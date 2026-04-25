@@ -46,6 +46,15 @@ const app = {
             });
         });
 
+        // Sidebar Toggle
+        const sidebarToggleBtn = document.getElementById('sidebar-toggle');
+        const sidebar = document.getElementById('main-sidebar');
+        if (sidebarToggleBtn && sidebar) {
+            sidebarToggleBtn.addEventListener('click', () => {
+                sidebar.classList.toggle('collapsed');
+            });
+        }
+
         // Global Search with Debounce
         let searchTimeout;
         this.globalSearchInput.addEventListener('input', (e) => {
@@ -298,6 +307,8 @@ const app = {
     renderInvestments(investments) {
         this.investmentsTbody.innerHTML = investments.map((inv, i) => `
             <tr class="interactive fade-in-up" style="animation-delay: ${i * 0.03}s" onclick="app.fetchAndShowModal('investments', ${inv.id})">
+                <td style="font-weight: 500">${inv.startup ? inv.startup.name : 'Unknown'}</td>
+                <td style="color: var(--text-secondary)">${inv.investor ? inv.investor.name : 'Unknown'}</td>
                 <td><span class="badge">${inv.round || 'Unknown'}</span></td>
                 <td style="font-weight: 500">${this.formatMoney(inv.amount_usd)}</td>
                 <td>${this.formatDate(inv.date)}</td>
@@ -412,6 +423,74 @@ const app = {
                 }
             }
         });
+    },
+
+    // --- CSV Export Logic ---
+    async exportToCSV(type) {
+        // Helper: properly escape a value for CSV
+        const esc = (val) => {
+            if (val === null || val === undefined) return '""';
+            const str = String(val).replace(/"/g, '""');
+            return `"${str}"`;
+        };
+
+        try {
+            const res = await fetch(`${API_BASE}/${type}?page=1&per_page=1000`);
+            const data = await res.json();
+            const items = data.data;
+
+            if (!items || items.length === 0) {
+                alert('No data to export.');
+                return;
+            }
+
+            let rows = [];
+
+            if (type === 'startups') {
+                rows.push(['ID', 'Name', 'Country', 'Founded Year', 'Status', 'Description'].join(','));
+                items.forEach(i => rows.push([
+                    i.id, esc(i.name), esc(i.country), i.founded_year || '', esc(i.status), esc(i.description)
+                ].join(',')));
+
+            } else if (type === 'investors') {
+                rows.push(['ID', 'Name', 'Fund Name', 'Focus Area', 'Portfolio Size'].join(','));
+                items.forEach(i => rows.push([
+                    i.id,
+                    esc(i.name),
+                    esc(i.fund_name),
+                    esc(i.focus_area),
+                    i.investments ? i.investments.length : 0
+                ].join(',')));
+
+            } else if (type === 'investments') {
+                rows.push(['ID', 'Startup', 'Investor', 'Round', 'Amount USD', 'Date', 'Status'].join(','));
+                items.forEach(i => rows.push([
+                    i.id,
+                    esc(i.startup ? i.startup.name : ''),
+                    esc(i.investor ? i.investor.name : ''),
+                    esc(i.round),
+                    i.amount_usd || 0,
+                    i.date || '',
+                    esc(i.status)
+                ].join(',')));
+            }
+
+            const csvContent = rows.join('\r\n');
+            const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            const ts = new Date().toISOString().slice(0,19).replace(/[:T]/g,'-');
+            link.download = `${type}_${ts}.csv`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(url);
+
+        } catch (error) {
+            console.error('Export failed:', error);
+            alert('Failed to generate CSV export.');
+        }
     },
 
     // --- Modal Logic ---

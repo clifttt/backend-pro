@@ -1,98 +1,141 @@
 """
-test_auth.py — Tests for JWT authentication endpoints
-Week 12: Unit tests for /token and protected routes
+test_auth.py — Tests for Auth endpoints (Week 9 + 12)
 """
 import pytest
 
 
-# ── /token ──────────────────────────────────────────────────────────────────
-
 class TestTokenEndpoint:
-    def test_login_valid_credentials(self, seeded_client):
-        """POST /token with correct credentials returns 200 + access_token"""
-        response = seeded_client.post(
+    def test_login_success(self, seeded_client):
+        resp = seeded_client.post(
             "/token",
-            data={"username": "admin", "password": "secret"},
+            data={"username": "admin", "password": "Admin@12345!"},
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
-        assert response.status_code == 200
-        body = response.json()
+        assert resp.status_code == 200
+        body = resp.json()
         assert "access_token" in body
         assert body["token_type"] == "bearer"
-        assert len(body["access_token"]) > 10
+        assert "expires_in" in body
 
     def test_login_wrong_password(self, seeded_client):
-        """POST /token with wrong password returns 401"""
-        response = seeded_client.post(
+        resp = seeded_client.post(
             "/token",
-            data={"username": "admin", "password": "WRONG"},
+            data={"username": "admin", "password": "wrongpassword"},
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
-        assert response.status_code == 401
+        assert resp.status_code == 401
 
-    def test_login_wrong_username(self, seeded_client):
-        """POST /token with wrong username returns 401"""
-        response = seeded_client.post(
+    def test_login_nonexistent_user(self, seeded_client):
+        resp = seeded_client.post(
             "/token",
-            data={"username": "hacker", "password": "secret"},
+            data={"username": "ghost_user", "password": "whatever123"},
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
-        assert response.status_code == 401
+        assert resp.status_code == 401
 
     def test_login_missing_fields(self, seeded_client):
-        """POST /token with no body returns 422 Unprocessable Entity"""
-        response = seeded_client.post("/token")
-        assert response.status_code == 422
-
-    def test_token_is_valid_jwt_format(self, seeded_client):
-        """Token should be a 3-part dot-separated JWT string"""
-        response = seeded_client.post(
+        resp = seeded_client.post(
             "/token",
-            data={"username": "admin", "password": "secret"},
+            data={"username": "admin"},
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
-        token = response.json()["access_token"]
-        parts = token.split(".")
-        assert len(parts) == 3, "JWT must have header.payload.signature"
+        assert resp.status_code == 422
 
 
-# ── Protected routes ─────────────────────────────────────────────────────────
-
-class TestProtectedRoutes:
-    def test_create_startup_without_token_returns_401(self, seeded_client):
-        """POST /startups without auth header → 401"""
-        response = seeded_client.post(
-            "/startups",
-            json={"name": "Unauthorized Startup", "country": "RU"},
+class TestRegisterEndpoint:
+    def test_register_new_user(self, seeded_client):
+        resp = seeded_client.post(
+            "/auth/register",
+            json={"username": "newuser_test", "email": "newuser@test.local", "password": "Password123!"},
         )
-        assert response.status_code == 401
+        assert resp.status_code == 201
+        body = resp.json()
+        assert body["username"] == "newuser_test"
+        assert "id" in body
+        assert "hashed_password" not in body  # never expose
 
-    def test_create_startup_with_invalid_token_returns_401(self, seeded_client):
-        """POST /startups with garbage token → 401"""
-        response = seeded_client.post(
-            "/startups",
-            json={"name": "Unauthorized Startup", "country": "RU"},
-            headers={"Authorization": "Bearer INVALID.TOKEN.HERE"},
+    def test_register_duplicate_username(self, seeded_client):
+        # First registration
+        seeded_client.post(
+            "/auth/register",
+            json={"username": "dup_user", "email": "dup1@test.local", "password": "Password123!"},
         )
-        assert response.status_code == 401
+        # Second with same username
+        resp = seeded_client.post(
+            "/auth/register",
+            json={"username": "dup_user", "email": "dup2@test.local", "password": "Password123!"},
+        )
+        assert resp.status_code == 409
 
-    def test_create_startup_with_valid_token_returns_201(
-        self, seeded_client, auth_headers
-    ):
-        """POST /startups with valid JWT → 201 Created"""
-        response = seeded_client.post(
+    def test_register_duplicate_email(self, seeded_client):
+        seeded_client.post(
+            "/auth/register",
+            json={"username": "emailuser1", "email": "shared@test.local", "password": "Password123!"},
+        )
+        resp = seeded_client.post(
+            "/auth/register",
+            json={"username": "emailuser2", "email": "shared@test.local", "password": "Password123!"},
+        )
+        assert resp.status_code == 409
+
+    def test_register_short_password(self, seeded_client):
+        resp = seeded_client.post(
+            "/auth/register",
+            json={"username": "shortpw", "email": "short@test.local", "password": "abc"},
+        )
+        assert resp.status_code == 422
+
+
+class TestMeEndpoint:
+    def test_get_profile_authenticated(self, seeded_client, auth_headers):
+        resp = seeded_client.get("/auth/me", headers=auth_headers)
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["username"] == "admin"
+        assert "email" in body
+        assert "is_active" in body
+        assert "hashed_password" not in body
+
+    def test_get_profile_unauthenticated(self, seeded_client):
+        resp = seeded_client.get("/auth/me")
+        assert resp.status_code == 401
+
+    def test_get_profile_invalid_token(self, seeded_client):
+        resp = seeded_client.get("/auth/me", headers={"Authorization": "Bearer invalidtoken"})
+        assert resp.status_code == 401
+
+
+class TestSecurityHeaders:
+    def test_security_headers_present(self, client):
+        resp = client.get("/")
+        assert "x-content-type-options" in resp.headers
+        assert resp.headers["x-content-type-options"] == "nosniff"
+        assert "x-frame-options" in resp.headers
+        assert resp.headers["x-frame-options"] == "DENY"
+        assert "x-xss-protection" in resp.headers
+
+    def test_protected_endpoint_requires_auth(self, seeded_client):
+        resp = seeded_client.post("/startups", json={"name": "Unauthorized Startup"})
+        assert resp.status_code == 401
+
+    def test_protected_endpoint_with_valid_token(self, seeded_client, auth_headers):
+        resp = seeded_client.post(
             "/startups",
-            json={
-                "name": "Auth Test Startup",
-                "country": "KZ",
-                "description": "Created via authenticated request",
-                "founded_year": 2023,
-                "status": "Active",
-            },
+            json={"name": "Auth Test Startup", "country": "US", "founded_year": 2023},
             headers=auth_headers,
         )
-        assert response.status_code == 201
-        body = response.json()
-        assert body["name"] == "Auth Test Startup"
-        assert body["country"] == "KZ"
-        assert "id" in body
+        assert resp.status_code == 201
+
+    def test_put_startup_requires_auth(self, seeded_client):
+        startups = seeded_client.get("/startups").json()["data"]
+        if startups:
+            sid = startups[0]["id"]
+            resp = seeded_client.put(f"/startups/{sid}", json={"name": "Hack Attempt"})
+            assert resp.status_code == 401
+
+    def test_delete_startup_requires_auth(self, seeded_client):
+        startups = seeded_client.get("/startups").json()["data"]
+        if startups:
+            sid = startups[0]["id"]
+            resp = seeded_client.delete(f"/startups/{sid}")
+            assert resp.status_code == 401

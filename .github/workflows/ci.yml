@@ -2,9 +2,9 @@ name: CI Pipeline
 
 on:
   push:
-    branches: [ "main", "master" ]
+    branches: ["main", "master"]
   pull_request:
-    branches: [ "main", "master" ]
+    branches: ["main", "master"]
 
 jobs:
   lint-test-build:
@@ -15,10 +15,10 @@ jobs:
       - name: ⬇️ Checkout code
         uses: actions/checkout@v4
 
-      - name: 🐍 Set up Python 3.10
+      - name: 🐍 Set up Python 3.11
         uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
+          python-version: "3.11"
 
       - name: 📦 Install dependencies
         run: |
@@ -31,18 +31,26 @@ jobs:
           flake8 app/ --count --select=E9,F63,F7,F82 --show-source --statistics
           flake8 app/ --count --max-line-length=120 --statistics --exit-zero
 
-      - name: 🔍 Run flake8 linter (root .py files)
+      - name: 🔍 Run flake8 linter (root collectors)
         run: |
-          flake8 *.py --count --select=E9,F63,F7,F82 --show-source --statistics --exclude=venv
-          flake8 *.py --count --max-line-length=120 --statistics --exit-zero --exclude=venv
+          flake8 enhanced_collector.py normalizer.py scheduler_main.py \
+            --count --select=E9,F63,F7,F82 --show-source --statistics
+          flake8 enhanced_collector.py normalizer.py scheduler_main.py \
+            --count --max-line-length=120 --statistics --exit-zero
 
       - name: 🧪 Run pytest with coverage
         env:
-          DATABASE_URL_LOCAL: "sqlite:///./test.db"
-          SECRET_KEY: "test-secret-key-for-ci"
+          DATABASE_URL_LOCAL: "sqlite:///./test_ci.db"
+          SECRET_KEY: "ci-test-secret-key-at-least-32-chars-long"
+          ADMIN_PASSWORD: "Admin@12345!"
+          ENABLE_METRICS: "false"
+          ALLOWED_ORIGINS: "*"
         run: |
-          pytest tests/ -v --cov=app --cov-report=term-missing --cov-report=xml \
-            --cov-fail-under=40
+          pytest tests/ -v \
+            --cov=app \
+            --cov-report=term-missing \
+            --cov-report=xml \
+            --cov-fail-under=50
         continue-on-error: false
 
       - name: 📊 Upload coverage report
@@ -59,11 +67,19 @@ jobs:
       - name: ✅ Verify Docker image starts
         run: |
           docker run --rm -d \
-            -e DATABASE_URL_LOCAL=postgresql+psycopg://postgres:postgres@localhost:5432/invest_db \
-            -e SECRET_KEY=ci-test-secret-key \
+            -e DATABASE_URL_LOCAL=sqlite:///./demo.db \
+            -e SECRET_KEY=ci-test-secret-key-at-least-32-chars \
+            -e ADMIN_PASSWORD=Admin@12345! \
+            -e ENABLE_METRICS=false \
+            -e ALLOWED_ORIGINS="*" \
             -p 8001:8000 \
             --name test-container \
             investment-hub:ci
-          sleep 5
+          sleep 8
+          curl -f http://localhost:8001/health || (docker logs test-container && exit 1)
           docker stop test-container || true
-          echo "Docker build and start: SUCCESS"
+          echo "✅ Docker build and health-check: SUCCESS"
+
+      - name: 🧹 Cleanup test DB
+        if: always()
+        run: rm -f test_ci.db test_temp.db

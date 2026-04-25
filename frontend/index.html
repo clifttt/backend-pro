@@ -21,10 +21,10 @@
 <body>
     <div class="app-container">
         <!-- Sidebar Navigation -->
-        <aside class="sidebar">
+        <aside class="sidebar" id="main-sidebar">
             <div class="logo-container">
                 <div class="logo-icon"></div>
-                <h2>InvestHub</h2>
+                <span class="sidebar-title">InvestHub</span>
             </div>
 
             <nav class="nav-menu">
@@ -35,20 +35,20 @@
                         <rect x="14" y="14" width="7" height="7"></rect>
                         <rect x="3" y="14" width="7" height="7"></rect>
                     </svg>
-                    Dashboard
+                    <span>Dashboard</span>
                 </button>
                 <button class="nav-item" data-tab="search">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <circle cx="11" cy="11" r="8"></circle>
                         <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
                     </svg>
-                    Global Search
+                    <span>Global Search</span>
                 </button>
                 <button class="nav-item" data-tab="startups">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"></path>
                     </svg>
-                    Startups
+                    <span>Startups</span>
                 </button>
                 <button class="nav-item" data-tab="investors">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -57,24 +57,26 @@
                         <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
                         <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
                     </svg>
-                    Investors
+                    <span>Investors</span>
                 </button>
                 <button class="nav-item" data-tab="investments">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <line x1="12" y1="1" x2="12" y2="23"></line>
                         <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
                     </svg>
-                    Investments
+                    <span>Investments</span>
                 </button>
             </nav>
 
             <div class="sidebar-footer">
-                <div class="source-info" style="margin-bottom: 10px; display: flex; align-items: center; gap: 8px;">
-                    <span style="font-size: 1.2em;">📊</span>
-                    <span style="font-size: 13px; color: #888;">Data by <strong>Crunchbase</strong></span>
+                <div class="footer-item">
+                    <span class="footer-icon">📊</span>
+                    <span class="footer-text">Data by <strong>Crunchbase</strong></span>
                 </div>
-                <div class="status-indicator online"></div>
-                <span>API Status: Online</span>
+                <div class="footer-item">
+                    <div class="status-indicator online"></div>
+                    <span class="footer-text">API Status: <strong style="color: #10b981;">Online</strong></span>
+                </div>
             </div>
         </aside>
 
@@ -87,8 +89,7 @@
                         <circle cx="11" cy="11" r="8"></circle>
                         <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
                     </svg>
-                    <input type="text" placeholder="Quick search for startups, investors or rounds..."
-                        id="global-search-input">
+                    <input type="text" placeholder="Quick search for startups, investors or rounds..." id="global-search-input">
                 </div>
                 <div class="user-profile">
                     <div class="avatar">👨‍💻</div>
@@ -148,7 +149,8 @@
                 <section id="view-startups" class="view hidden">
                     <div class="header-with-actions">
                         <h1>Startups Directory</h1>
-                        <div class="filters">
+                        <div class="filters" style="display:flex; gap:10px;">
+                            <button class="btn-csv" onclick="app.exportToCSV('startups')">Download CSV</button>
                             <select id="startup-sort" onchange="app.fetchStartups()">
                                 <option value="name">Sort by Name</option>
                                 <option value="founded_year">Sort by Founded Year</option>
@@ -165,7 +167,12 @@
 
                 <!-- Investors View -->
                 <section id="view-investors" class="view hidden">
-                    <h1>Investors & Funds</h1>
+                    <div class="header-with-actions">
+                        <h1>Investors & Funds</h1>
+                        <div class="filters">
+                            <a href="http://localhost:8000/investors/export/csv" class="btn-csv" style="text-decoration:none;">Download CSV</a>
+                        </div>
+                    </div>
                     <div class="data-grid" id="investors-container">
                         <!-- Investor cards injected here -->
                     </div>
@@ -174,11 +181,18 @@
 
                 <!-- Investments View -->
                 <section id="view-investments" class="view hidden">
-                    <h1>Investment Rounds</h1>
+                    <div class="header-with-actions">
+                        <h1>Investment Rounds</h1>
+                        <div class="filters">
+                            <button class="btn-csv" onclick="app.exportToCSV('investments')">Download CSV</button>
+                        </div>
+                    </div>
                     <div class="table-container">
                         <table class="data-table">
                             <thead>
                                 <tr>
+                                    <th>Startup</th>
+                                    <th>Investor</th>
                                     <th>Round</th>
                                     <th>Amount (USD)</th>
                                     <th>Date</th>
