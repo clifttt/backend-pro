@@ -1,21 +1,23 @@
 #!/usr/bin/env python3
 """
-Инициализация базы данных
-Создание всех таблиц и загрузка РЕАЛЬНЫХ данных из crunchbase_real_data.json
+init_db.py — Инициализация базы данных.
+Создаёт все таблицы (включая новые колонки) и загружает
+реальные данные из crunchbase_real_data.json.
 """
 
 import os
 import sys
 import json
 import random
-from datetime import date
+from datetime import date, datetime
 from dotenv import load_dotenv
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect
 from sqlalchemy.orm import sessionmaker
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from app.models import Base, Startup, Investor, Investment
+from app.models import Base, Startup, Investor, Investment, User
+from app.auth import get_password_hash
 
 load_dotenv()
 
@@ -24,158 +26,221 @@ DATABASE_URL = os.getenv(
     "postgresql+psycopg://postgres:postgres@localhost:5432/invest_db"
 )
 
-ROUNDS = ["Seed", "Series A", "Series B", "Series C", "Series D", "Venture Round"]
+ROUNDS = ["Seed", "Series A", "Series B", "Series C", "Series D", "Growth"]
 
-def load_crunchbase_data(filepath="crunchbase_real_data.json"):
-    with open(filepath, "r", encoding="utf-8") as f:
-        return json.load(f)
+FOCUS_MAP = {
+    "Sequoia Capital": "Technology, Consumer, Enterprise",
+    "Andreessen Horowitz": "Software, Crypto, Bio",
+    "Index Ventures": "E-commerce, Gaming, SaaS",
+    "Kleiner Perkins": "CleanTech, Life Sciences",
+    "Y Combinator": "Early-stage, All sectors",
+    "Tiger Global": "Internet, SaaS, FinTech",
+    "General Catalyst": "Health, Climate, AI",
+    "Accel": "SaaS, Security, Developer tools",
+    "Greylock": "Enterprise, Consumer",
+    "Khosla Ventures": "CleanTech, AI, Health",
+    "Lightspeed Venture Partners": "Enterprise, Consumer, FinTech",
+    "Lightspeed": "Enterprise, Consumer, FinTech",
+    "Founders Fund": "Deep Tech, Biotech",
+    "DST Global": "Internet, Consumer",
+    "Ribbit Capital": "FinTech",
+    "Thrive Capital": "Technology, Media",
+    "Google": "AI, Cloud, Consumer",
+    "Microsoft": "Enterprise, Cloud, AI",
+    "Amazon": "Cloud, Logistics",
+    "SoftBank Vision Fund": "AI, Robotics, IoT",
+    "Bessemer Venture Partners": "Cloud, Security",
+    "General Atlantic": "Growth equity",
+    "Insight Partners": "Software, Internet",
+}
 
-def generate_investment_rounds(total_funding, num_rounds):
-    """Случайно распределяет общую сумму по n раундам."""
-    if total_funding == 0 or num_rounds == 0:
+
+def make_source_url(name: str) -> str:
+    slug = name.lower().replace(" ", "-").replace(".", "").replace(",", "").replace("'", "")
+    return f"https://www.crunchbase.com/organization/{slug}"
+
+
+def generate_investment_amounts(total_funding: float, num_investors: int) -> list:
+    """Распределить сумму funding между инвесторами."""
+    if total_funding <= 0 or num_investors == 0:
         return []
-        
-    percentages = [random.uniform(0.1, 1.0) for _ in range(num_rounds)]
-    total_weight = sum(percentages)
-    
-    rounds_amounts = []
-    for p in percentages:
-        amount = round((p / total_weight) * total_funding, 2)
-        rounds_amounts.append(amount)
-        
-    # Корректируем последний раунд чтобы сумма сходилась идеально
-    diff = total_funding - sum(rounds_amounts)
-    rounds_amounts[-1] += diff
-    
-    # Сортируем: ранние раунды обычно меньше
-    rounds_amounts.sort()
-    return rounds_amounts
+    weights = [random.uniform(0.2, 1.0) for _ in range(num_investors)]
+    total_weight = sum(weights)
+    amounts = [round((w / total_weight) * total_funding, 2) for w in weights]
+    # Выровнять сумму
+    diff = total_funding - sum(amounts)
+    amounts[-1] += diff
+    return amounts
+
 
 try:
-    print(f"📊 Инициализация БД...")
+    print("📊 Investment Intelligence Hub — Инициализация БД")
+    print("=" * 52)
+
     engine = create_engine(DATABASE_URL, echo=False)
-    Session = sessionmaker(bind=engine)
 
-    print("📋 Создание таблиц...")
+    # ── Шаг 1: Пересоздаём схему (drop+create для SQLite) ──────────────────
+    inspector = inspect(engine)
+    existing_tables = inspector.get_table_names()
+
+    if existing_tables:
+        # Проверяем, есть ли уже новые колонки
+        if "startups" in existing_tables:
+            cols = [c["name"] for c in inspector.get_columns("startups")]
+            if "source_url" not in cols or "created_at" not in cols:
+                print("🔄 Обнаружена устаревшая схема — пересоздаём таблицы...")
+                Base.metadata.drop_all(engine)
+
+    print("📋 Создание таблиц (полная схема)...")
     Base.metadata.create_all(engine)
-    print("✅ Таблицы созданы/обновлены")
+    print("✅ Таблицы созданы")
 
+    Session = sessionmaker(bind=engine)
     session = Session()
 
-    # Загружаем реальные данные
-    cb_data = load_crunchbase_data()
+    # ── Шаг 2: Создаём admin пользователя ──────────────────────────────────
+    if session.query(User).count() == 0:
+        admin_password = os.getenv("ADMIN_PASSWORD", "Admin@12345!")
+        admin = User(
+            username="admin",
+            email="admin@investmenthub.local",
+            hashed_password=get_password_hash(admin_password),
+            is_active=True,
+            is_admin=True,
+        )
+        session.add(admin)
+        session.commit()
+        print(f"👤 Admin пользователь создан (пароль: {admin_password})")
+
+    # ── Шаг 3: Загружаем реальные данные ───────────────────────────────────
+    cb_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "crunchbase_real_data.json")
+    with open(cb_path, "r", encoding="utf-8") as f:
+        cb_data = json.load(f)
+
     raw_startups = cb_data.get("startups", [])
     raw_investors = cb_data.get("investors", [])
-    
-    # ─── 1. Инвесторы ───
-    existing_investor_names = {i.name: i for i in session.query(Investor).all()}
-    
-    new_investors_count = 0
+
+    print(f"\n📥 Источник данных: {os.path.basename(cb_path)}")
+    print(f"   Стартапов в источнике: {len(raw_startups)}")
+    print(f"   Инвесторов в источнике: {len(raw_investors)}")
+
+    # ── Шаг 4: Инвесторы ───────────────────────────────────────────────────
+    existing_inv_map = {i.name: i for i in session.query(Investor).all()}
+    new_inv_count = 0
+
     for inv_name in raw_investors:
-        if inv_name not in existing_investor_names:
-            # Для реальных инвесторов мы просто сохраняем имя, фонд и фокус можно генерировать или оставить None
+        if inv_name not in existing_inv_map:
             inv = Investor(
-                name=inv_name, 
-                fund_name=f"{inv_name} Global Fund", 
-                focus_area="Technology, Software"
+                name=inv_name,
+                fund_name=f"{inv_name} Global Fund",
+                focus_area=FOCUS_MAP.get(inv_name, "Technology, Software"),
             )
             session.add(inv)
-            new_investors_count += 1
-            
-    session.flush()
-    # Обновляем мапу
-    all_investors_map = {i.name: i for i in session.query(Investor).all()}
-    print(f"✅ Создано новых инвесторов: {new_investors_count} (Всего: {len(all_investors_map)})")
+            new_inv_count += 1
 
-    # ─── 2. Стартапы и Инвестиции ───
+    session.flush()
+    all_investors_map = {i.name: i for i in session.query(Investor).all()}
+    print(f"\n👥 Инвесторов создано: {new_inv_count} (Всего: {len(all_investors_map)})")
+
+    # ── Шаг 5: Стартапы + Инвестиции ───────────────────────────────────────
     existing_startups = {s.name for s in session.query(Startup).all()}
-    
     new_startups_count = 0
     new_investments_count = 0
-    
-    print("📥 Загрузка реальных стартапов и их раундов...")
+
+    print("🏢 Загрузка стартапов...")
     for s_data in raw_startups:
         name = s_data["name"]
         if name in existing_startups:
             continue
-            
+
         startup = Startup(
             name=name,
             country=s_data.get("country", "USA"),
             description=s_data.get("description", ""),
             founded_year=s_data.get("founded_year", 2010),
-            status=s_data.get("status", "Active")
+            status=s_data.get("status", "Active"),
+            source_url=make_source_url(name),
         )
         session.add(startup)
         session.flush()
         existing_startups.add(name)
         new_startups_count += 1
-        
-        # Распределение раундов
+
         total_funding = s_data.get("funding", 0)
-        investors_list = s_data.get("investors", [])
-        
-        if not investors_list or total_funding == 0:
+        investors_list = [
+            n for n in s_data.get("investors", []) if n != "Bootstrapped"
+        ]
+
+        if not investors_list:
             continue
-            
-        # Защита от несуществующих инвесторов (если в startups указан инвестор, которого нет в глобальном списке)
+
+        # Создаём/находим инвесторов из данного стартапа
         valid_investors = []
         for inv_name in investors_list:
             if inv_name in all_investors_map:
                 valid_investors.append(all_investors_map[inv_name])
             else:
-                # На всякий случай создаем его
-                new_inv = Investor(name=inv_name)
+                new_inv = Investor(
+                    name=inv_name,
+                    fund_name=f"{inv_name} Fund",
+                    focus_area=FOCUS_MAP.get(inv_name, "Technology"),
+                )
                 session.add(new_inv)
                 session.flush()
                 all_investors_map[inv_name] = new_inv
                 valid_investors.append(new_inv)
-                
-        num_rounds = len(valid_investors)
-        rounds_amounts = generate_investment_rounds(total_funding, num_rounds)
-        
-        # Создаем инвестиции a16z -> Series A, Sequoia -> Series B и т.д.
-        year = startup.founded_year
-        for idx, amount in enumerate(rounds_amounts):
-            investor = valid_investors[idx]
-            
-            # Логика: ранние раунды - ранние года, поздние - поздние
-            year_offset = min(idx * 2, date.today().year - year)
-            inv_date = date(year + year_offset, random.randint(1, 12), random.randint(1, 28))
-            
-            # Подбираем название раунда по индексу (Seed, Series A, B, C...)
-            round_name = ROUNDS[min(idx, len(ROUNDS)-1)]
-            
+
+        amounts = generate_investment_amounts(total_funding, len(valid_investors))
+        founded = s_data.get("founded_year") or 2015
+
+        for idx, investor in enumerate(valid_investors):
+            amount = amounts[idx] if amounts else float(random.randint(500_000, 10_000_000))
+
+            # Раунд по размеру суммы
+            if amount >= 200_000_000:
+                round_name = "Growth"
+            elif amount >= 50_000_000:
+                round_name = "Series C"
+            elif amount >= 15_000_000:
+                round_name = "Series B"
+            elif amount >= 3_000_000:
+                round_name = "Series A"
+            else:
+                round_name = "Seed"
+
+            invest_year = min(2024, founded + 1 + idx)
+            inv_date = date(invest_year, random.randint(1, 12), random.randint(1, 28))
+
             investment = Investment(
                 startup_id=startup.id,
                 investor_id=investor.id,
                 round=round_name,
-                amount_usd=amount,
+                amount_usd=round(amount, 2),
                 date=inv_date,
-                status="Concluded" if idx < len(rounds_amounts)-1 else "Active"
+                status="Concluded" if idx < len(valid_investors) - 1 else "Active",
             )
             session.add(investment)
             new_investments_count += 1
-            
+
     session.commit()
 
-    total_startups = session.query(Startup).count()
-    total_investments = session.query(Investment).count()
+    total_s = session.query(Startup).count()
+    total_i = session.query(Investor).count()
+    total_inv = session.query(Investment).count()
+    total_u = session.query(User).count()
 
-    print(f"\n✨ БД успешно заполнена реальными данными Crunchbase!")
-    print(f"   📊 Создано стартапов: {new_startups_count}")
-    print(f"   💰 Создано инвестиций: {new_investments_count}")
-    print(f"   -----")
-    print(f"   Всего стартапов: {total_startups}")
-    print(f"   Всего инвесторов: {len(all_investors_map)}")
-    print(f"   Всего инвестиций: {total_investments}")
+    print(f"\n{'=' * 52}")
+    print("✨ БД успешно инициализирована реальными данными!")
+    print(f"   📊 Стартапов: {total_s}")
+    print(f"   👥 Инвесторов: {total_i}")
+    print(f"   💰 Инвестиций: {total_inv}")
+    print(f"   👤 Пользователей: {total_u}")
+    print(f"{'=' * 52}")
 
     session.close()
 
 except Exception as e:
-    print(f"❌ Ошибка: {e}")
+    print(f"\n❌ Ошибка при инициализации БД: {e}")
     import traceback
     traceback.print_exc()
     sys.exit(1)
-
-print("\n🚀 Запуск приложения: uvicorn app.main:app --reload")
